@@ -4,17 +4,20 @@
       {
         "port": 3000,
         "label": "website",
-        "subdirectory": "/"
+        "subdirectory": "/",
+        "embeddable": false
       },
       {
         "port": 3000,
         "label": "webview",
-        "subdirectory": "/webview"
+        "subdirectory": "/webview",
+        "embeddable": false
       },
       {
         "port": 3000,
         "label": "cms",
-        "subdirectory": "/cms"
+        "subdirectory": "/cms",
+        "embeddable": false
       }
     ]
   }
