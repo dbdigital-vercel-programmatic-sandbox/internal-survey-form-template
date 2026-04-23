@@ -1,0 +1,20 @@
+{
+    "version": "v1",
+    "ports": [
+      {
+        "port": 3000,
+        "label": "website",
+        "subdirectory": "/"
+      },
+      {
+        "port": 3000,
+        "label": "webview",
+        "subdirectory": "/webview"
+      },
+      {
+        "port": 3000,
+        "label": "cms",
+        "subdirectory": "/cms"
+      }
+    ]
+  }
