@@ -14,7 +14,7 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { authClient } from "@/lib/internal/auth-client"
-import { ClipboardList, DatabaseIcon, LogOutIcon } from "lucide-react"
+import { DatabaseIcon, LogOutIcon, SparklesIcon } from "lucide-react"
 import Link from "next/link"
 
 type Session = {
@@ -40,10 +40,10 @@ export function CmsShell({
           <SidebarContent>
             <SidebarMenu>
               <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Survey responses">
+                <SidebarMenuButton asChild tooltip="Infographic studio">
                   <Link href="/cms">
-                    <ClipboardList />
-                    <span>Survey</span>
+                    <SparklesIcon />
+                    <span>Studio</span>
                   </Link>
                 </SidebarMenuButton>
               </SidebarMenuItem>
