@@ -16,6 +16,89 @@ const MAX_HISTORY_MESSAGES = 8
 const MAX_SOURCE_IMAGES = 6
 const MAX_MEDIA_FOR_MODEL = 6
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024
+const INFOGRAPHIC_RESPONSE_SCHEMA = {
+  name: "infographic_response",
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      assistantMessage: { type: "string" },
+      recommendedAssets: {
+        type: "array",
+        items: { type: "string" },
+      },
+      infographic: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          title: { type: "string" },
+          subtitle: { type: "string" },
+          takeaway: { type: "string" },
+          footer: { type: "string" },
+          heroAssetIds: {
+            type: "array",
+            items: { type: "string" },
+          },
+          stripAssetIds: {
+            type: "array",
+            items: { type: "string" },
+          },
+          palette: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              background: { type: "string" },
+              surface: { type: "string" },
+              accent: { type: "string" },
+              text: { type: "string" },
+              muted: { type: "string" },
+            },
+            required: ["background", "surface", "accent", "text", "muted"],
+          },
+          stats: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                label: { type: "string" },
+                value: { type: "string" },
+              },
+              required: ["label", "value"],
+            },
+          },
+          sections: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              properties: {
+                heading: { type: "string" },
+                body: {
+                  type: "array",
+                  items: { type: "string" },
+                },
+              },
+              required: ["heading", "body"],
+            },
+          },
+        },
+        required: [
+          "title",
+          "subtitle",
+          "takeaway",
+          "footer",
+          "palette",
+          "stats",
+          "sections",
+          "heroAssetIds",
+          "stripAssetIds",
+        ],
+      },
+    },
+    required: ["assistantMessage", "recommendedAssets", "infographic"],
+  },
+} as const
 
 type RequestBody = {
   prompt: string
@@ -371,7 +454,8 @@ async function callOpenAI({
     body: JSON.stringify({
       model: MODEL_ID,
       response_format: {
-        type: "json_object",
+        type: "json_schema",
+        json_schema: INFOGRAPHIC_RESPONSE_SCHEMA,
       },
       messages,
     }),
