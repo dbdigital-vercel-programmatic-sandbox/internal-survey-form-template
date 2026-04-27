@@ -416,7 +416,7 @@ async function callOpenAI({
     {
       role: "system",
       content:
-        "You are an infographic-focused newsroom assistant. Your job is to turn a user's link, uploaded images, and instructions into a sharp infographic brief. Always prefer uploaded images over scraped link images when selecting visuals. Only use scraped images when they add clear context or when user uploads are insufficient. Return valid JSON only with keys assistantMessage, infographic, and recommendedAssets. The infographic object must contain title, subtitle, takeaway, footer, palette, stats, sections, heroAssetIds, and stripAssetIds. Palette values must be 6-digit hex colors. Keep sections concise and factual.",
+        "You are an infographic-focused newsroom assistant. Your job is to turn a user's link, uploaded images, and instructions into a sharp infographic brief. Always prefer uploaded images over scraped link images when selecting visuals. Only use scraped images when they add clear context or when user uploads are insufficient. Return valid JSON only with keys assistantMessage, infographic, and recommendedAssets. The infographic object must contain title, subtitle, takeaway, footer, palette, stats, sections, heroAssetIds, and stripAssetIds. Palette values must be 6-digit hex colors. Keep sections concise and factual. Optimize for a clean, presentable layout: avoid verbose copy, avoid repeated points, keep title and subtitle compact, keep stat labels short, and write section bullets short enough to fit without visual overlap.",
     },
     ...history.slice(-MAX_HISTORY_MESSAGES).map((message) => ({
       role: message.role,
@@ -433,6 +433,7 @@ async function callOpenAI({
             sources.length > 0 ? `Scraped source context:\n${sourceSummary}` : "No source links were available.",
             assets.length > 0 ? `Available visual assets:\n${assetSummary}` : "No visual assets were available.",
             "Prefer uploaded visuals first. If you recommend assets, list their ids with uploaded assets first whenever possible.",
+            "Generate layout-safe copy: short title, compact subtitle, brief takeaway, concise stat labels, and short section bullets so the infographic remains presentable with no overlaps.",
           ].join("\n\n"),
         },
         ...visualAssets.map((asset) => ({

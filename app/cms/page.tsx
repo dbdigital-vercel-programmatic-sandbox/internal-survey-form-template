@@ -7,6 +7,7 @@ import {
   ImagePlusIcon,
   LinkIcon,
   LoaderIcon,
+  RefreshCwIcon,
   SendHorizonalIcon,
   SparklesIcon,
   Trash2Icon,
@@ -30,6 +31,12 @@ import {
 const MAX_ATTACHMENTS = 4
 const CANVAS_WIDTH = 1080
 const CANVAS_HEIGHT = 1600
+const QUICK_REFINEMENTS = [
+  "Tighten the headline and make the explainer more election-focused.",
+  "Use the uploaded images more prominently and reduce generic source visuals.",
+  "Add stronger stat callouts and shorten the body copy for social sharing.",
+  "Shift the palette and hierarchy closer to a Hindi news explainer graphic.",
+]
 
 function escapeXml(value: string) {
   return value
@@ -64,6 +71,17 @@ function wrapText(text: string, width: number, fontSize: number) {
   }
 
   return lines
+}
+
+function clampLines(lines: string[], maxLines: number) {
+  if (lines.length <= maxLines) {
+    return lines
+  }
+
+  const nextLines = lines.slice(0, maxLines)
+  const lastLine = nextLines[maxLines - 1] ?? ""
+  nextLines[maxLines - 1] = lastLine.length > 3 ? `${lastLine.slice(0, -3)}...` : `${lastLine}...`
+  return nextLines
 }
 
 function renderTextLines({
@@ -105,9 +123,9 @@ function buildInfographicSvg(spec: InfographicSpec, assets: VisualAsset[]) {
   }
 
   const palette = spec.palette
-  const titleLines = wrapText(spec.title, 600, 62).slice(0, 4)
-  const subtitleLines = wrapText(spec.subtitle, 600, 28).slice(0, 4)
-  const takeawayLines = wrapText(spec.takeaway, 940, 32).slice(0, 3)
+  const titleLines = clampLines(wrapText(spec.title, 600, 62), 3)
+  const subtitleLines = clampLines(wrapText(spec.subtitle, 600, 28), 3)
+  const takeawayLines = clampLines(wrapText(spec.takeaway, 940, 32), 2)
   const sections = spec.sections.slice(0, 4)
   const stats = spec.stats.slice(0, 4)
 
@@ -115,10 +133,10 @@ function buildInfographicSvg(spec: InfographicSpec, assets: VisualAsset[]) {
     .map((section, index) => {
       const x = index % 2 === 0 ? 60 : 535
       const y = 980 + Math.floor(index / 2) * 230
-      const headingLines = wrapText(section.heading, 370, 28).slice(0, 2)
+      const headingLines = clampLines(wrapText(section.heading, 370, 28), 2)
       const bulletLines = section.body
         .slice(0, 3)
-        .map((item) => wrapText(`• ${item}`, 350, 22).slice(0, 3))
+        .map((item) => clampLines(wrapText(`• ${item}`, 350, 22), 2))
       let cursorY = y + 54
 
       const textParts = [
@@ -165,7 +183,7 @@ function buildInfographicSvg(spec: InfographicSpec, assets: VisualAsset[]) {
       return [
         `<rect x="${x}" y="760" width="${width}" height="146" rx="24" fill="${palette.surface}" opacity="0.98" />`,
         renderTextLines({
-          lines: wrapText(stat.value, 170, 42).slice(0, 2),
+          lines: clampLines(wrapText(stat.value, 170, 42), 2),
           x: x + 24,
           y: 820,
           fontSize: 42,
@@ -174,7 +192,7 @@ function buildInfographicSvg(spec: InfographicSpec, assets: VisualAsset[]) {
           weight: 900,
         }),
         renderTextLines({
-          lines: wrapText(stat.label, 180, 20).slice(0, 3),
+          lines: clampLines(wrapText(stat.label, 180, 20), 2),
           x: x + 24,
           y: 872,
           fontSize: 20,
@@ -383,6 +401,9 @@ export default function CmsPage() {
 
   const svg = result ? buildInfographicSvg(result.infographic, result.assets) : null
   const svgPreview = svg ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}` : null
+  const hasDraft = Boolean(result)
+  const assetCount = result?.assets.length ?? 0
+  const sourceCount = result?.extractedSources.length ?? 0
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? [])
@@ -406,14 +427,20 @@ export default function CmsPage() {
     setAttachments((current) => current.filter((item) => item.id !== id))
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!prompt.trim()) {
-      setError("Add a prompt before generating an infographic.")
+  function resetConversation() {
+    setMessages([])
+    setResult(null)
+    setPrompt("")
+    setError(null)
+  }
+
+  async function submitPrompt(rawPrompt: string) {
+    if (!rawPrompt.trim()) {
+      setError(hasDraft ? "Add a refinement request before updating the draft." : "Add a prompt before generating an infographic.")
       return
     }
 
-    const userMessage = [prompt.trim(), sourceUrl.trim() ? `Source: ${sourceUrl.trim()}` : null]
+    const userMessage = [rawPrompt.trim(), sourceUrl.trim() ? `Source: ${sourceUrl.trim()}` : null]
       .filter(Boolean)
       .join("\n")
 
@@ -422,7 +449,7 @@ export default function CmsPage() {
 
     try {
       const response = await postJson<InfographicResponse>("/api/cms/infographic", {
-        prompt,
+        prompt: rawPrompt,
         sourceUrl,
         attachments,
         history: messages,
@@ -442,6 +469,11 @@ export default function CmsPage() {
     }
   }
 
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    await submitPrompt(prompt)
+  }
+
   return (
     <div className="min-h-full bg-[radial-gradient(circle_at_top,_rgba(157,28,31,0.12),_transparent_38%),linear-gradient(180deg,_rgba(248,244,236,0.9),_rgba(255,255,255,1))] p-6">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
@@ -456,13 +488,33 @@ export default function CmsPage() {
                 <Badge variant="secondary">GPT-4.1 mini</Badge>
               </div>
               <p className="text-sm leading-6 text-muted-foreground">
-                Paste a story link, attach a few images, and steer the assistant toward a finished infographic. Every link is scraped for text and images before generation, while uploaded images stay highest priority.
+                Paste a story link, attach a few images, and iterate on the same draft naturally. Every link is scraped for text and images before generation, while uploaded images stay highest priority.
               </p>
             </CardHeader>
 
             <CardContent className="space-y-5">
-              <form className="space-y-4" onSubmit={(event) => void handleSubmit(event)}>
-                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
+              <div className="rounded-3xl border border-zinc-200 bg-zinc-50/80 p-4 dark:border-zinc-800 dark:bg-zinc-900/60">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-semibold text-foreground">Source pack</p>
+                    <p className="text-sm text-muted-foreground">
+                      {hasDraft
+                        ? "Keep the same source materials while refining the current draft."
+                        : "Step 1: add the story link and preferred images for the first draft."}
+                    </p>
+                  </div>
+                  {hasDraft ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="secondary">{messages.length / 2} rounds</Badge>
+                      <Button type="button" variant="outline" size="sm" onClick={resetConversation}>
+                        <RefreshCwIcon />
+                        Start new draft
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
                   <div className="space-y-2">
                     <label className="text-sm font-medium">Story link</label>
                     <div className="relative">
@@ -471,40 +523,30 @@ export default function CmsPage() {
                         value={sourceUrl}
                         onChange={(event) => setSourceUrl(event.target.value)}
                         placeholder="https://example.com/article"
-                        className="pl-9"
+                        className="bg-white pl-9 dark:bg-zinc-950"
                       />
                     </div>
                   </div>
 
                   <div className="space-y-2">
                     <label className="text-sm font-medium">Attach images</label>
-                    <label className="flex h-10 cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-zinc-300 bg-zinc-50 px-4 text-sm font-medium text-zinc-700 transition hover:border-[#9d1c1f] hover:text-[#9d1c1f] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200">
+                    <label className="flex h-10 cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-zinc-300 bg-white px-4 text-sm font-medium text-zinc-700 transition hover:border-[#9d1c1f] hover:text-[#9d1c1f] dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200">
                       <ImagePlusIcon className="size-4" />
-                      <span>Add up to 4</span>
+                      <span>{attachments.length > 0 ? `Add more (${attachments.length}/${MAX_ATTACHMENTS})` : "Add up to 4"}</span>
                       <input className="hidden" type="file" accept="image/*" multiple onChange={handleFileChange} />
                     </label>
                   </div>
                 </div>
 
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">Prompt</label>
-                  <Textarea
-                    value={prompt}
-                    onChange={(event) => setPrompt(event.target.value)}
-                    placeholder="Summarize the angle, key stats, and the visual mood you want for the infographic."
-                    className="min-h-36 resize-y"
-                  />
-                </div>
-
                 {attachments.length > 0 ? (
-                  <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="mt-4 grid gap-3 sm:grid-cols-2">
                     {attachments.map((attachment) => (
-                      <div key={attachment.id} className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900">
+                      <div key={attachment.id} className="rounded-2xl border border-zinc-200 bg-white p-3 dark:border-zinc-800 dark:bg-zinc-950">
                         <img src={attachment.dataUrl} alt={attachment.name} className="mb-3 aspect-[4/3] w-full rounded-xl object-cover" />
                         <div className="flex items-center justify-between gap-3">
                           <div className="min-w-0">
                             <p className="truncate text-sm font-medium">{attachment.name}</p>
-                            <p className="text-xs text-muted-foreground">Priority visual</p>
+                            <p className="text-xs text-muted-foreground">Priority visual carried across refinements</p>
                           </div>
                           <Button type="button" variant="ghost" size="icon" onClick={() => removeAttachment(attachment.id)}>
                             <Trash2Icon />
@@ -514,6 +556,57 @@ export default function CmsPage() {
                     ))}
                   </div>
                 ) : null}
+              </div>
+
+              <form className="space-y-4" onSubmit={(event) => void handleSubmit(event)}>
+                <div className="rounded-3xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">
+                        {hasDraft ? "Refine current draft" : "Create first draft"}
+                      </p>
+                      <p className="text-sm text-muted-foreground">
+                        {hasDraft
+                          ? "Describe exactly what should change in the current infographic."
+                          : "Describe the angle, tone, hierarchy, and must-have facts for the initial infographic."}
+                      </p>
+                    </div>
+                    {hasDraft ? (
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="secondary">{assetCount} usable visuals</Badge>
+                        <Badge variant="secondary">{sourceCount} source pages read</Badge>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="mt-4 space-y-3">
+                    <Textarea
+                      value={prompt}
+                      onChange={(event) => setPrompt(event.target.value)}
+                      placeholder={
+                        hasDraft
+                          ? "Example: Make the headline sharper, reduce text density in the lower cards, and use my uploaded portrait as the main hero image."
+                          : "Example: Build a Hindi-first election explainer with a bold headline, 3 stat boxes, and strong visual emphasis on my uploaded images."
+                      }
+                      className={cn("resize-y bg-zinc-50 dark:bg-zinc-900", hasDraft ? "min-h-28" : "min-h-36")}
+                    />
+
+                    {hasDraft ? (
+                      <div className="flex flex-wrap gap-2">
+                        {QUICK_REFINEMENTS.map((item) => (
+                          <button
+                            key={item}
+                            type="button"
+                            className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-left text-xs font-medium text-zinc-700 transition hover:border-[#9d1c1f] hover:text-[#9d1c1f] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200"
+                            onClick={() => setPrompt(item)}
+                          >
+                            {item}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
 
                 {error ? (
                   <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">
@@ -524,10 +617,12 @@ export default function CmsPage() {
                 <div className="flex flex-wrap items-center gap-3">
                   <Button type="submit" disabled={submitting} className="bg-[#9d1c1f] text-white hover:bg-[#82171a]">
                     {submitting ? <LoaderIcon className="animate-spin" /> : <SendHorizonalIcon />}
-                    Generate infographic
+                    {hasDraft ? "Update infographic" : "Generate infographic"}
                   </Button>
                   <p className="text-sm text-muted-foreground">
-                    Uploaded images are sent first, then scraped link images are added as secondary context.
+                    {hasDraft
+                      ? "Each follow-up keeps the same source pack and conversation context unless you change it above."
+                      : "Uploaded images are sent first, then scraped link images are added as secondary context."}
                   </p>
                 </div>
               </form>
@@ -535,12 +630,12 @@ export default function CmsPage() {
               <div className="rounded-2xl border border-zinc-200 bg-zinc-50/70 dark:border-zinc-800 dark:bg-zinc-900/50">
                 <div className="flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
                   <SparklesIcon className="size-4 text-[#9d1c1f]" />
-                  <p className="text-sm font-semibold">Chat history</p>
+                  <p className="text-sm font-semibold">Conversation</p>
                 </div>
                 <ScrollArea className="h-[340px] px-4 py-4">
                   {messages.length === 0 ? (
                     <p className="text-sm leading-6 text-muted-foreground">
-                      Start with a link and direction like: “Use my uploaded portraits as the primary visuals, extract any charts or logos from the article, and build a Hindi-first election explainer.”
+                      Start with a link and direction like: “Use my uploaded portraits as the primary visuals, extract any charts or logos from the article, and build a Hindi-first election explainer.” After the first version, keep using the refinement box above for precise edits.
                     </p>
                   ) : (
                     <div className="space-y-3">
@@ -588,6 +683,25 @@ export default function CmsPage() {
                 ) : null}
               </CardHeader>
               <CardContent>
+                {result ? (
+                  <div className="mb-4 grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Title</p>
+                      <p className="mt-2 text-sm font-semibold leading-6">{result.infographic.title}</p>
+                    </div>
+                    <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Takeaway</p>
+                      <p className="mt-2 text-sm leading-6 text-foreground/85">{result.infographic.takeaway}</p>
+                    </div>
+                    <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Structure</p>
+                      <p className="mt-2 text-sm leading-6 text-foreground/85">
+                        {result.infographic.stats.length} stats, {result.infographic.sections.length} sections, {result.infographic.heroAssetIds.length} hero picks
+                      </p>
+                    </div>
+                  </div>
+                ) : null}
+
                 {svgPreview ? (
                   <img src={svgPreview} alt="Generated infographic preview" className="w-full rounded-[28px] border border-zinc-200 bg-[#f8f4ec] shadow-sm dark:border-zinc-800" />
                 ) : (
