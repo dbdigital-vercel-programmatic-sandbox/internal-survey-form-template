@@ -16,6 +16,7 @@ const MAX_HISTORY_MESSAGES = 8
 const MAX_SOURCE_IMAGES = 6
 const MAX_MEDIA_FOR_MODEL = 6
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024
+const SUPPORTED_MODEL_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"])
 const INFOGRAPHIC_RESPONSE_SCHEMA = {
   name: "infographic_response",
   schema: {
@@ -125,6 +126,19 @@ type OpenAIResult = {
   assistantMessage?: unknown
   infographic?: Partial<InfographicSpec>
   recommendedAssets?: unknown
+}
+
+function normalizeMediaType(value: string) {
+  return value.split(";")[0]?.trim().toLowerCase() ?? ""
+}
+
+function isSupportedModelImageType(value: string) {
+  return SUPPORTED_MODEL_IMAGE_TYPES.has(normalizeMediaType(value))
+}
+
+function getDataUrlMediaType(value: string) {
+  const match = value.match(/^data:([^;,]+)[;,]/i)
+  return normalizeMediaType(match?.[1] ?? "")
 }
 
 function sanitizeText(value: string, maxLength: number) {
@@ -277,8 +291,8 @@ async function remoteImageToDataUrl(url: string) {
       return null
     }
 
-    const mediaType = response.headers.get("content-type") ?? ""
-    if (!mediaType.startsWith("image/")) {
+    const mediaType = normalizeMediaType(response.headers.get("content-type") ?? "")
+    if (!isSupportedModelImageType(mediaType)) {
       return null
     }
 
@@ -508,12 +522,13 @@ export async function POST(request: Request) {
 
     const uploadedAssets: VisualAsset[] = (body.attachments ?? [])
       .filter((item) => item.dataUrl?.startsWith("data:image/"))
+      .filter((item) => isSupportedModelImageType(item.mediaType || getDataUrlMediaType(item.dataUrl)))
       .slice(0, 4)
       .map((item, index) => ({
         id: item.id || `upload-${index + 1}`,
         source: "upload",
         title: sanitizeText(item.name || `Upload ${index + 1}`, 80),
-        mediaType: item.mediaType || "image/jpeg",
+        mediaType: normalizeMediaType(item.mediaType || getDataUrlMediaType(item.dataUrl) || "image/jpeg"),
         dataUrl: item.dataUrl,
         originUrl: null,
       }))
@@ -530,7 +545,7 @@ export async function POST(request: Request) {
           id: `link-${index + 1}`,
           source: "link" as const,
           title: `Source image ${index + 1}`,
-          mediaType: dataUrl.slice(5, dataUrl.indexOf(";")) || "image/jpeg",
+          mediaType: getDataUrlMediaType(dataUrl) || "image/jpeg",
           dataUrl,
           originUrl: url,
         }
