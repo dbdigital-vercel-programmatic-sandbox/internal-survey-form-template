@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises"
+import path from "node:path"
 import { NextResponse } from "next/server"
 
 import {
@@ -9,9 +11,15 @@ import {
   type UploadedAsset,
   type VisualAsset,
 } from "@/lib/cms/infographic"
+import {
+  INFOGRAPHIC_TEMPLATE_REFERENCES,
+  buildTemplateReferenceSummary,
+} from "@/lib/cms/templates"
 
 const OPENAI_API_URL = "https://ai-gateway.vercel.sh/v1/chat/completions"
-const MODEL_ID = "openai/gpt-4.1-mini"
+const FINAL_MODEL_ID = process.env.CMS_INFOGRAPHIC_FINAL_MODEL ?? "openai/gpt-4.1"
+const REFINEMENT_MODEL_ID =
+  process.env.CMS_INFOGRAPHIC_REFINEMENT_MODEL ?? "openai/gpt-4.1-mini"
 const MAX_HISTORY_MESSAGES = 8
 const MAX_SOURCE_IMAGES = 6
 const MAX_MEDIA_FOR_MODEL = 6
@@ -103,6 +111,7 @@ const INFOGRAPHIC_RESPONSE_SCHEMA = {
 
 type RequestBody = {
   prompt: string
+  mode?: "setup" | "refinement"
   sourceUrl?: string
   attachments?: UploadedAsset[]
   history?: ChatMessage[]
@@ -139,6 +148,15 @@ function isSupportedModelImageType(value: string) {
 function getDataUrlMediaType(value: string) {
   const match = value.match(/^data:([^;,]+)[;,]/i)
   return normalizeMediaType(match?.[1] ?? "")
+}
+
+function fileExtensionToMediaType(filePath: string) {
+  const extension = path.extname(filePath).toLowerCase()
+  if (extension === ".png") return "image/png"
+  if (extension === ".jpg" || extension === ".jpeg") return "image/jpeg"
+  if (extension === ".webp") return "image/webp"
+  if (extension === ".gif") return "image/gif"
+  return null
 }
 
 function sanitizeText(value: string, maxLength: number) {
@@ -354,6 +372,31 @@ function preferAssetIds({
   return Array.from(new Set([...uploaded, ...current, ...recommended, ...fallback])).slice(0, limit)
 }
 
+async function loadTemplateReferenceImages() {
+  const references = await Promise.all(
+    INFOGRAPHIC_TEMPLATE_REFERENCES.map(async (template) => {
+      const absolutePath = path.join(process.cwd(), "public", template.filePath.replace(/^\//, ""))
+      const mediaType = fileExtensionToMediaType(absolutePath)
+
+      if (!mediaType || !isSupportedModelImageType(mediaType)) {
+        return null
+      }
+
+      try {
+        const buffer = await readFile(absolutePath)
+        return {
+          id: template.id,
+          dataUrl: `data:${mediaType};base64,${buffer.toString("base64")}`,
+        }
+      } catch {
+        return null
+      }
+    })
+  )
+
+  return references.filter((item): item is { id: string; dataUrl: string } => Boolean(item))
+}
+
 function normalizeInfographic(value: Partial<InfographicSpec> | undefined, assetIds: string[]): InfographicSpec {
   const stats = Array.isArray(value?.stats)
     ? value.stats
@@ -396,11 +439,13 @@ function normalizeInfographic(value: Partial<InfographicSpec> | undefined, asset
 }
 
 async function callOpenAI({
+  mode,
   prompt,
   history,
   sources,
   assets,
 }: {
+  mode: "setup" | "refinement"
   prompt: string
   history: ChatMessage[]
   sources: ExtractedSource[]
@@ -412,7 +457,10 @@ async function callOpenAI({
     throw new Error("APP_BUILDER_VERCEL_AI_GATEWAY is not configured.")
   }
 
+  const modelId = mode === "refinement" ? REFINEMENT_MODEL_ID : FINAL_MODEL_ID
   const visualAssets = assets.slice(0, MAX_MEDIA_FOR_MODEL)
+  const templateSummary = buildTemplateReferenceSummary()
+  const templateImages = await loadTemplateReferenceImages()
   const assetSummary = assets
     .map((asset) => `${asset.id} | ${asset.source} | ${asset.title}${asset.originUrl ? ` | ${asset.originUrl}` : ""}`)
     .join("\n")
@@ -430,7 +478,7 @@ async function callOpenAI({
     {
       role: "system",
       content:
-        "You are an infographic-focused newsroom assistant. Your job is to turn a user's link, uploaded images, and instructions into a sharp infographic brief. Always prefer uploaded images over scraped link images when selecting visuals. Only use scraped images when they add clear context or when user uploads are insufficient. Return valid JSON only with keys assistantMessage, infographic, and recommendedAssets. The infographic object must contain title, subtitle, takeaway, footer, palette, stats, sections, heroAssetIds, and stripAssetIds. Palette values must be 6-digit hex colors. Keep sections concise and factual. Optimize for a clean, presentable layout: avoid verbose copy, avoid repeated points, keep title and subtitle compact, keep stat labels short, and write section bullets short enough to fit without visual overlap.",
+        "You are an infographic-focused newsroom assistant. Your job is to turn a user's link, uploaded images, and instructions into a sharp infographic brief. Always prefer uploaded images over scraped link images when selecting visuals. Only use scraped images when they add clear context or when user uploads are insufficient. Return valid JSON only with keys assistantMessage, infographic, and recommendedAssets. The infographic object must contain title, subtitle, takeaway, footer, palette, stats, sections, heroAssetIds, and stripAssetIds. Palette values must be 6-digit hex colors. Keep sections concise and factual. Optimize for a clean, presentable layout: avoid verbose copy, avoid repeated points, keep title and subtitle compact, keep stat labels short, and write section bullets short enough to fit without visual overlap. Treat any reference templates as style inspiration only. Never copy or paraphrase their text, facts, subject matter, logos, maps, charts, or embedded images.",
     },
     ...history.slice(-MAX_HISTORY_MESSAGES).map((message) => ({
       role: message.role,
@@ -446,14 +494,25 @@ async function callOpenAI({
             `User request: ${sanitizeText(prompt, 2400)}`,
             sources.length > 0 ? `Scraped source context:\n${sourceSummary}` : "No source links were available.",
             assets.length > 0 ? `Available visual assets:\n${assetSummary}` : "No visual assets were available.",
+            `Style-only template references:\n${templateSummary}`,
             "Prefer uploaded visuals first. If you recommend assets, list their ids with uploaded assets first whenever possible.",
             "Generate layout-safe copy: short title, compact subtitle, brief takeaway, concise stat labels, and short section bullets so the infographic remains presentable with no overlaps.",
+            "Aim for editorial infographic quality with disciplined spacing, strong hierarchy, clear sectioning, and visually distinct information modules.",
+            templateImages.length > 0
+              ? "The final images in this request are template references only. Use them only for style, density, spacing, and hierarchy. Never use their subject matter, text, numbers, logos, maps, charts, or embedded images as output content."
+              : "",
           ].join("\n\n"),
         },
         ...visualAssets.map((asset) => ({
           type: "image_url",
           image_url: {
             url: asset.dataUrl,
+          },
+        })),
+        ...templateImages.map((image) => ({
+          type: "image_url",
+          image_url: {
+            url: image.dataUrl,
           },
         })),
       ],
@@ -467,7 +526,7 @@ async function callOpenAI({
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: MODEL_ID,
+      model: modelId,
       response_format: {
         type: "json_schema",
         json_schema: INFOGRAPHIC_RESPONSE_SCHEMA,
@@ -500,6 +559,7 @@ async function callOpenAI({
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as RequestBody
+    const mode = body.mode === "refinement" ? "refinement" : "setup"
     const prompt = sanitizeText(body.prompt ?? "", 3000)
 
     if (!prompt) {
@@ -558,6 +618,7 @@ export async function POST(request: Request) {
     const assets: VisualAsset[] = [...uploadedAssets, ...linkAssets]
     const sourceSummaries = pages.map((page) => page.source)
     const openAIResult = await callOpenAI({
+      mode,
       prompt,
       history: (body.history ?? []).filter((message) => message.role === "user" || message.role === "assistant"),
       sources: sourceSummaries,

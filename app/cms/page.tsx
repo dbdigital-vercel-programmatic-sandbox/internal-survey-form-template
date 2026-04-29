@@ -7,6 +7,9 @@ import {
   ImagePlusIcon,
   LinkIcon,
   LoaderIcon,
+  LockIcon,
+  MessageSquareIcon,
+  PencilIcon,
   RefreshCwIcon,
   SendHorizonalIcon,
   SparklesIcon,
@@ -113,161 +116,170 @@ function buildInfographicSvg(spec: InfographicSpec, assets: VisualAsset[]) {
   const assetMap = new Map(assets.map((asset) => [asset.id, asset]))
   const preferredHeroIds = [...spec.heroAssetIds, ...spec.stripAssetIds]
   const heroAsset = preferredHeroIds.map((id) => assetMap.get(id)).find(Boolean) ?? assets[0] ?? null
-  const stripAssets = spec.stripAssetIds
+  const supportAssets = spec.stripAssetIds
     .map((id) => assetMap.get(id))
     .filter((asset): asset is VisualAsset => Boolean(asset))
-    .slice(0, 3)
+    .slice(0, 2)
 
-  if (stripAssets.length === 0 && heroAsset) {
-    stripAssets.push(heroAsset)
+  if (supportAssets.length === 0 && heroAsset) {
+    supportAssets.push(heroAsset)
   }
 
   const palette = spec.palette
-  const titleLines = clampLines(wrapText(spec.title, 600, 62), 3)
-  const subtitleLines = clampLines(wrapText(spec.subtitle, 600, 28), 3)
+  const titleLines = clampLines(wrapText(spec.title, 560, 54), 3)
+  const subtitleLines = clampLines(wrapText(spec.subtitle, 560, 24), 3)
   const takeawayLines = clampLines(wrapText(spec.takeaway, 940, 32), 2)
-  const sections = spec.sections.slice(0, 4)
+  const sections = spec.sections.slice(0, 3)
   const stats = spec.stats.slice(0, 4)
+
+  const supportMarkup = supportAssets
+    .map((asset, index) => {
+      const width = 140
+      const height = 116
+      const x = 734 + index * 152
+      const y = 486
+      const clipId = `support-clip-${index}`
+
+      return [
+        `<clipPath id="${clipId}"><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="18" /></clipPath>`,
+        `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="18" fill="#ffffff" />`,
+        `<image href="${asset.dataUrl}" x="${x}" y="${y}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clipId})" />`,
+      ].join("")
+    })
+    .join("")
+
+  const statCards = stats
+    .map((stat, index) => {
+      const cardWidth = 225
+      const cardHeight = 150
+      const gap = 18
+      const x = 54 + index * (cardWidth + gap)
+      const y = 644
+      const valueLines = clampLines(wrapText(stat.value, 177, 34), 2)
+      const labelLines = clampLines(wrapText(stat.label, 177, 18), 2)
+      const valueStartY = y + 56
+      const labelStartY = valueStartY + valueLines.length * 40 + 16
+
+      return [
+        `<rect x="${x}" y="${y}" width="${cardWidth}" height="${cardHeight}" rx="22" fill="#ffffff" stroke="${palette.accent}" stroke-opacity="0.12" />`,
+        renderTextLines({
+          lines: valueLines,
+          x: x + 24,
+          y: valueStartY,
+          fontSize: 34,
+          lineHeight: 40,
+          color: palette.accent,
+          weight: 900,
+        }),
+        renderTextLines({
+          lines: labelLines,
+          x: x + 24,
+          y: labelStartY,
+          fontSize: 18,
+          lineHeight: 22,
+          color: palette.muted,
+          weight: 700,
+        }),
+      ].join("")
+    })
+    .join("")
 
   const sectionCards = sections
     .map((section, index) => {
-      const x = index % 2 === 0 ? 60 : 535
-      const y = 980 + Math.floor(index / 2) * 230
-      const headingLines = clampLines(wrapText(section.heading, 370, 28), 2)
+      const x = 54
+      const y = 846 + index * 180
+      const headingLines = clampLines(wrapText(section.heading, 250, 26), 2)
       const bulletLines = section.body
-        .slice(0, 3)
-        .map((item) => clampLines(wrapText(`• ${item}`, 350, 22), 2))
-      let cursorY = y + 54
+        .slice(0, 2)
+        .map((item) => clampLines(wrapText(`• ${item}`, 620, 20), 1))
+      let cursorY = y + 34
 
       const textParts = [
-        `<rect x="${x}" y="${y}" width="425" height="190" rx="26" fill="${palette.surface}" opacity="0.96" />`,
+        `<rect x="${x}" y="${y}" width="972" height="152" rx="24" fill="#ffffff" stroke="${palette.accent}" stroke-opacity="0.1" />`,
+        `<rect x="${x}" y="${y}" width="232" height="152" rx="24" fill="${palette.accent}" />`,
         renderTextLines({
           lines: headingLines,
           x: x + 26,
-          y: y + 48,
-          fontSize: 28,
-          lineHeight: 34,
-          color: palette.text,
+          y: y + 50,
+          fontSize: 26,
+          lineHeight: 31,
+          color: "#ffffff",
           weight: 800,
         }),
       ]
 
-      cursorY += headingLines.length * 34
+      cursorY += headingLines.length * 28
       for (const lines of bulletLines) {
-        cursorY += 22
+        cursorY += 20
         textParts.push(
           renderTextLines({
             lines,
-            x: x + 26,
+            x: x + 272,
             y: cursorY,
-            fontSize: 22,
-            lineHeight: 28,
-            color: palette.muted,
+            fontSize: 20,
+            lineHeight: 24,
+            color: palette.text,
             weight: 500,
           })
         )
-        cursorY += lines.length * 28
+        cursorY += lines.length * 24
       }
 
       return textParts.join("")
     })
     .join("")
 
-  const statCards = stats
-    .map((stat, index) => {
-      const width = 230
-      const gap = 20
-      const totalWidth = stats.length * width + Math.max(stats.length - 1, 0) * gap
-      const startX = (CANVAS_WIDTH - totalWidth) / 2
-      const x = startX + index * (width + gap)
-      return [
-        `<rect x="${x}" y="760" width="${width}" height="146" rx="24" fill="${palette.surface}" opacity="0.98" />`,
-        renderTextLines({
-          lines: clampLines(wrapText(stat.value, 170, 42), 2),
-          x: x + 24,
-          y: 820,
-          fontSize: 42,
-          lineHeight: 48,
-          color: palette.accent,
-          weight: 900,
-        }),
-        renderTextLines({
-          lines: clampLines(wrapText(stat.label, 180, 20), 2),
-          x: x + 24,
-          y: 872,
-          fontSize: 20,
-          lineHeight: 25,
-          color: palette.muted,
-          weight: 600,
-        }),
-      ].join("")
-    })
-    .join("")
-
-  const stripMarkup = stripAssets
-    .map((asset, index) => {
-      const x = 60 + index * 320
-      const clipId = `strip-clip-${index}`
-      return [
-        `<clipPath id="${clipId}"><rect x="${x}" y="560" width="300" height="150" rx="24" /></clipPath>`,
-        `<rect x="${x}" y="560" width="300" height="150" rx="24" fill="${palette.surface}" opacity="0.94" />`,
-        `<image href="${asset.dataUrl}" x="${x}" y="560" width="300" height="150" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clipId})" />`,
-      ].join("")
-    })
-    .join("")
-
   const heroMarkup = heroAsset
     ? [
-        `<clipPath id="hero-clip"><rect x="700" y="124" width="320" height="360" rx="34" /></clipPath>`,
-        `<rect x="700" y="124" width="320" height="360" rx="34" fill="${palette.surface}" opacity="0.96" />`,
-        `<image href="${heroAsset.dataUrl}" x="700" y="124" width="320" height="360" preserveAspectRatio="xMidYMid slice" clip-path="url(#hero-clip)" />`,
+        `<clipPath id="hero-clip"><rect x="734" y="118" width="292" height="350" rx="28" /></clipPath>`,
+        `<rect x="734" y="118" width="292" height="350" rx="28" fill="#ffffff" />`,
+        `<image href="${heroAsset.dataUrl}" x="734" y="118" width="292" height="350" preserveAspectRatio="xMidYMid slice" clip-path="url(#hero-clip)" />`,
       ].join("")
-    : `<rect x="700" y="124" width="320" height="360" rx="34" fill="${palette.surface}" opacity="0.96" />`
+    : `<rect x="734" y="118" width="292" height="350" rx="28" fill="#ffffff" />`
 
   return `
     <svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS_WIDTH}" height="${CANVAS_HEIGHT}" viewBox="0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}">
       <rect width="1080" height="1600" fill="${palette.background}" />
-      <rect x="0" y="0" width="1080" height="84" fill="${palette.accent}" />
-      <text x="60" y="54" fill="#ffffff" font-size="30" font-weight="800" font-family="Inter, Arial, sans-serif">CMS INFOGRAPHIC STUDIO</text>
-      <circle cx="942" cy="44" r="14" fill="#ffffff" opacity="0.18" />
-      <circle cx="986" cy="44" r="14" fill="#ffffff" opacity="0.18" />
-      <circle cx="1030" cy="44" r="14" fill="#ffffff" opacity="0.18" />
-      <rect x="60" y="124" width="600" height="360" rx="34" fill="${palette.surface}" opacity="0.97" />
+      <rect x="0" y="0" width="1080" height="76" fill="${palette.accent}" />
+      <text x="54" y="48" fill="#ffffff" font-size="28" font-weight="800" font-family="Inter, Arial, sans-serif">CMS INFOGRAPHIC STUDIO</text>
+      <rect x="54" y="108" width="652" height="496" rx="30" fill="${palette.surface}" />
+      <rect x="54" y="108" width="652" height="10" fill="${palette.accent}" />
+      <text x="88" y="152" fill="${palette.accent}" font-size="16" font-weight="800" font-family="Inter, Arial, sans-serif">EDITORIAL EXPLAINER</text>
       ${heroMarkup}
+      ${supportMarkup}
       ${renderTextLines({
         lines: titleLines,
-        x: 94,
-        y: 196,
-        fontSize: 62,
-        lineHeight: 72,
+        x: 88,
+        y: 220,
+        fontSize: 54,
+        lineHeight: 60,
         color: palette.text,
         weight: 900,
       })}
       ${renderTextLines({
         lines: subtitleLines,
-        x: 94,
-        y: 394,
-        fontSize: 28,
-        lineHeight: 36,
+        x: 88,
+        y: 414,
+        fontSize: 24,
+        lineHeight: 30,
         color: palette.muted,
         weight: 600,
       })}
-      <rect x="60" y="510" width="960" height="10" rx="5" fill="${palette.accent}" opacity="0.2" />
-      ${stripMarkup}
+      <line x1="54" y1="622" x2="1026" y2="622" stroke="${palette.accent}" stroke-opacity="0.18" stroke-width="3" />
       ${statCards}
-      <rect x="60" y="920" width="960" height="2" fill="${palette.accent}" opacity="0.18" />
+      <text x="54" y="826" fill="${palette.accent}" font-size="18" font-weight="800" font-family="Inter, Arial, sans-serif">KEY POINTS</text>
       ${sectionCards}
-      <rect x="60" y="1450" width="960" height="92" rx="30" fill="${palette.accent}" />
+      <rect x="54" y="1408" width="972" height="114" rx="28" fill="${palette.accent}" />
       ${renderTextLines({
         lines: takeawayLines,
-        x: 92,
-        y: 1504,
-        fontSize: 32,
-        lineHeight: 38,
+        x: 88,
+        y: 1472,
+        fontSize: 30,
+        lineHeight: 36,
         color: "#ffffff",
         weight: 800,
       })}
-      <text x="60" y="1578" fill="${palette.muted}" font-size="20" font-weight="600" font-family="Inter, Arial, sans-serif">${escapeXml(spec.footer)}</text>
+      <text x="54" y="1566" fill="${palette.muted}" font-size="18" font-weight="700" font-family="Inter, Arial, sans-serif">${escapeXml(spec.footer)}</text>
     </svg>
   `.trim()
 }
@@ -391,19 +403,22 @@ async function postJson<T>(url: string, body: unknown) {
 }
 
 export default function CmsPage() {
-  const [prompt, setPrompt] = useState("")
+  const [setupPrompt, setSetupPrompt] = useState("")
+  const [refinementPrompt, setRefinementPrompt] = useState("")
   const [sourceUrl, setSourceUrl] = useState("")
   const [attachments, setAttachments] = useState<UploadedAsset[]>([])
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [result, setResult] = useState<InfographicResponse | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [editingSourcePack, setEditingSourcePack] = useState(false)
 
   const svg = result ? buildInfographicSvg(result.infographic, result.assets) : null
   const svgPreview = svg ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}` : null
   const hasDraft = Boolean(result)
   const assetCount = result?.assets.length ?? 0
   const sourceCount = result?.extractedSources.length ?? 0
+  const sourcePackEditable = !hasDraft || editingSourcePack
 
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? [])
@@ -424,19 +439,25 @@ export default function CmsPage() {
   }
 
   function removeAttachment(id: string) {
+    if (!sourcePackEditable) {
+      return
+    }
+
     setAttachments((current) => current.filter((item) => item.id !== id))
   }
 
   function resetConversation() {
     setMessages([])
     setResult(null)
-    setPrompt("")
+    setSetupPrompt("")
+    setRefinementPrompt("")
     setError(null)
+    setEditingSourcePack(false)
   }
 
-  async function submitPrompt(rawPrompt: string) {
+  async function submitPrompt(rawPrompt: string, mode: "setup" | "refinement") {
     if (!rawPrompt.trim()) {
-      setError(hasDraft ? "Add a refinement request before updating the draft." : "Add a prompt before generating an infographic.")
+      setError(mode === "refinement" ? "Add a refinement request before updating the draft." : "Add a prompt before generating an infographic.")
       return
     }
 
@@ -450,6 +471,7 @@ export default function CmsPage() {
     try {
       const response = await postJson<InfographicResponse>("/api/cms/infographic", {
         prompt: rawPrompt,
+        mode,
         sourceUrl,
         attachments,
         history: messages,
@@ -461,7 +483,12 @@ export default function CmsPage() {
         { role: "assistant", text: response.assistantMessage },
       ])
       setResult(response)
-      setPrompt("")
+      if (mode === "setup") {
+        setSetupPrompt("")
+      } else {
+        setRefinementPrompt("")
+      }
+      setEditingSourcePack(false)
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Unable to generate infographic.")
     } finally {
@@ -471,7 +498,12 @@ export default function CmsPage() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    await submitPrompt(prompt)
+    await submitPrompt(setupPrompt, "setup")
+  }
+
+  async function handleRefinementSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    await submitPrompt(refinementPrompt, "refinement")
   }
 
   return (
@@ -490,6 +522,9 @@ export default function CmsPage() {
               <p className="text-sm leading-6 text-muted-foreground">
                 Paste a story link, attach a few images, and iterate on the same draft naturally. Every link is scraped for text and images before generation, while uploaded images stay highest priority.
               </p>
+              <p className="text-xs leading-5 text-muted-foreground">
+                Style-reference infographic samples can be added at `public/cms-templates/`. They are used only for layout and visual quality guidance, never for factual content or image reuse.
+              </p>
             </CardHeader>
 
             <CardContent className="space-y-5">
@@ -503,16 +538,38 @@ export default function CmsPage() {
                         : "Step 1: add the story link and preferred images for the first draft."}
                     </p>
                   </div>
-                  {hasDraft ? (
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant="secondary">{messages.length / 2} rounds</Badge>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {hasDraft ? <Badge variant="secondary">{messages.length / 2} rounds</Badge> : null}
+                    {hasDraft ? (
+                      <Badge variant={sourcePackEditable ? "outline" : "secondary"}>
+                        {sourcePackEditable ? "Source pack editable" : "Source pack locked"}
+                      </Badge>
+                    ) : null}
+                    {hasDraft ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setEditingSourcePack((current) => !current)}
+                      >
+                        {sourcePackEditable ? <LockIcon /> : <PencilIcon />}
+                        {sourcePackEditable ? "Lock source pack" : "Edit source pack"}
+                      </Button>
+                    ) : null}
+                    {hasDraft ? (
                       <Button type="button" variant="outline" size="sm" onClick={resetConversation}>
                         <RefreshCwIcon />
                         Start new draft
                       </Button>
-                    </div>
-                  ) : null}
+                    ) : null}
+                  </div>
                 </div>
+
+                {hasDraft && !sourcePackEditable ? (
+                  <div className="mt-4 rounded-2xl border border-zinc-200 bg-white/90 p-3 text-sm text-muted-foreground dark:border-zinc-800 dark:bg-zinc-950/80">
+                    Follow-up chats automatically reuse this link and these uploaded images. Nothing changes here unless you explicitly unlock and edit the source pack.
+                  </div>
+                ) : null}
 
                 <div className="mt-4 grid gap-3 md:grid-cols-[minmax(0,1fr)_220px]">
                   <div className="space-y-2">
@@ -522,6 +579,7 @@ export default function CmsPage() {
                       <Input
                         value={sourceUrl}
                         onChange={(event) => setSourceUrl(event.target.value)}
+                        disabled={!sourcePackEditable}
                         placeholder="https://example.com/article"
                         className="bg-white pl-9 dark:bg-zinc-950"
                       />
@@ -530,10 +588,21 @@ export default function CmsPage() {
 
                   <div className="space-y-2">
                     <label className="text-sm font-medium">Attach images</label>
-                    <label className="flex h-10 cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-zinc-300 bg-white px-4 text-sm font-medium text-zinc-700 transition hover:border-[#9d1c1f] hover:text-[#9d1c1f] dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200">
+                    <label className={cn(
+                      "flex h-10 items-center justify-center gap-2 rounded-md border border-dashed px-4 text-sm font-medium transition dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-200",
+                      sourcePackEditable
+                        ? "cursor-pointer border-zinc-300 bg-white text-zinc-700 hover:border-[#9d1c1f] hover:text-[#9d1c1f]"
+                        : "cursor-not-allowed border-zinc-200 bg-zinc-100 text-zinc-400 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-500"
+                    )}>
                       <ImagePlusIcon className="size-4" />
-                      <span>{attachments.length > 0 ? `Add more (${attachments.length}/${MAX_ATTACHMENTS})` : "Add up to 4"}</span>
-                      <input className="hidden" type="file" accept="image/*" multiple onChange={handleFileChange} />
+                      <span>
+                        {sourcePackEditable
+                          ? attachments.length > 0
+                            ? `Add more (${attachments.length}/${MAX_ATTACHMENTS})`
+                            : "Add up to 4"
+                          : "Unlock to change"}
+                      </span>
+                      <input className="hidden" type="file" accept="image/*" multiple disabled={!sourcePackEditable} onChange={handleFileChange} />
                     </label>
                   </div>
                 </div>
@@ -548,7 +617,7 @@ export default function CmsPage() {
                             <p className="truncate text-sm font-medium">{attachment.name}</p>
                             <p className="text-xs text-muted-foreground">Priority visual carried across refinements</p>
                           </div>
-                          <Button type="button" variant="ghost" size="icon" onClick={() => removeAttachment(attachment.id)}>
+                          <Button type="button" variant="ghost" size="icon" disabled={!sourcePackEditable} onClick={() => removeAttachment(attachment.id)}>
                             <Trash2Icon />
                           </Button>
                         </div>
@@ -558,104 +627,55 @@ export default function CmsPage() {
                 ) : null}
               </div>
 
-              <form className="space-y-4" onSubmit={(event) => void handleSubmit(event)}>
-                <div className="rounded-3xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
+              {!hasDraft ? (
+                <form className="space-y-4" onSubmit={(event) => void handleSubmit(event)}>
+                  <div className="rounded-3xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
                     <div>
-                      <p className="text-sm font-semibold text-foreground">
-                        {hasDraft ? "Refine current draft" : "Create first draft"}
-                      </p>
+                      <p className="text-sm font-semibold text-foreground">Create first draft</p>
                       <p className="text-sm text-muted-foreground">
-                        {hasDraft
-                          ? "Describe exactly what should change in the current infographic."
-                          : "Describe the angle, tone, hierarchy, and must-have facts for the initial infographic."}
+                        Step 2: describe the angle, tone, hierarchy, and must-have facts for the initial infographic.
                       </p>
                     </div>
-                    {hasDraft ? (
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant="secondary">{assetCount} usable visuals</Badge>
-                        <Badge variant="secondary">{sourceCount} source pages read</Badge>
-                      </div>
-                    ) : null}
-                  </div>
 
-                  <div className="mt-4 space-y-3">
-                    <Textarea
-                      value={prompt}
-                      onChange={(event) => setPrompt(event.target.value)}
-                      placeholder={
-                        hasDraft
-                          ? "Example: Make the headline sharper, reduce text density in the lower cards, and use my uploaded portrait as the main hero image."
-                          : "Example: Build a Hindi-first election explainer with a bold headline, 3 stat boxes, and strong visual emphasis on my uploaded images."
-                      }
-                      className={cn("resize-y bg-zinc-50 dark:bg-zinc-900", hasDraft ? "min-h-28" : "min-h-36")}
-                    />
-
-                    {hasDraft ? (
-                      <div className="flex flex-wrap gap-2">
-                        {QUICK_REFINEMENTS.map((item) => (
-                          <button
-                            key={item}
-                            type="button"
-                            className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-left text-xs font-medium text-zinc-700 transition hover:border-[#9d1c1f] hover:text-[#9d1c1f] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200"
-                            onClick={() => setPrompt(item)}
-                          >
-                            {item}
-                          </button>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-
-                {error ? (
-                  <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">
-                    {error}
-                  </div>
-                ) : null}
-
-                <div className="flex flex-wrap items-center gap-3">
-                  <Button type="submit" disabled={submitting} className="bg-[#9d1c1f] text-white hover:bg-[#82171a]">
-                    {submitting ? <LoaderIcon className="animate-spin" /> : <SendHorizonalIcon />}
-                    {hasDraft ? "Update infographic" : "Generate infographic"}
-                  </Button>
-                  <p className="text-sm text-muted-foreground">
-                    {hasDraft
-                      ? "Each follow-up keeps the same source pack and conversation context unless you change it above."
-                      : "Uploaded images are sent first, then scraped link images are added as secondary context."}
-                  </p>
-                </div>
-              </form>
-
-              <div className="rounded-2xl border border-zinc-200 bg-zinc-50/70 dark:border-zinc-800 dark:bg-zinc-900/50">
-                <div className="flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
-                  <SparklesIcon className="size-4 text-[#9d1c1f]" />
-                  <p className="text-sm font-semibold">Conversation</p>
-                </div>
-                <ScrollArea className="h-[340px] px-4 py-4">
-                  {messages.length === 0 ? (
-                    <p className="text-sm leading-6 text-muted-foreground">
-                      Start with a link and direction like: “Use my uploaded portraits as the primary visuals, extract any charts or logos from the article, and build a Hindi-first election explainer.” After the first version, keep using the refinement box above for precise edits.
-                    </p>
-                  ) : (
-                    <div className="space-y-3">
-                      {messages.map((message, index) => (
-                        <div
-                          key={`${message.role}-${index}`}
-                          className={cn(
-                            "max-w-[92%] rounded-2xl px-4 py-3 text-sm leading-6",
-                            message.role === "assistant"
-                              ? "bg-white text-foreground shadow-sm dark:bg-zinc-950"
-                              : "ml-auto bg-[#9d1c1f] text-white"
-                          )}
-                        >
-                          {message.text}
-                        </div>
-                      ))}
+                    <div className="mt-4 space-y-3">
+                      <Textarea
+                        value={setupPrompt}
+                        onChange={(event) => setSetupPrompt(event.target.value)}
+                        placeholder="Example: Build a Hindi-first election explainer with a bold headline, 3 stat boxes, and strong visual emphasis on my uploaded images."
+                        className="min-h-36 resize-y bg-zinc-50 dark:bg-zinc-900"
+                      />
                     </div>
-                  )}
-                </ScrollArea>
-              </div>
+                  </div>
+
+                  {error ? (
+                    <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">
+                      {error}
+                    </div>
+                  ) : null}
+
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button type="submit" disabled={submitting} className="bg-[#9d1c1f] text-white hover:bg-[#82171a]">
+                      {submitting ? <LoaderIcon className="animate-spin" /> : <SendHorizonalIcon />}
+                      Generate infographic
+                    </Button>
+                    <p className="text-sm text-muted-foreground">
+                      Uploaded images are sent first, then scraped link images are added as secondary context.
+                    </p>
+                  </div>
+                </form>
+              ) : (
+                <div className="rounded-3xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+                  <div className="flex items-start gap-3">
+                    <MessageSquareIcon className="mt-0.5 size-5 text-[#9d1c1f]" />
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">Follow-up updates happen in the refinement chat</p>
+                      <p className="text-sm text-muted-foreground">
+                        Use the separate chat window on the right to improve the current infographic. It automatically reuses the locked source pack and the prior conversation.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -711,6 +731,88 @@ export default function CmsPage() {
                 )}
               </CardContent>
             </Card>
+
+            {hasDraft ? (
+              <Card className="border-zinc-200/70 bg-white/92 shadow-sm backdrop-blur dark:bg-zinc-950/70">
+                <CardHeader>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <CardTitle>Refinement chat</CardTitle>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        Send update requests here. The same link, uploaded images, scraped source context, and prior responses are reused automatically.
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant="secondary">{assetCount} visuals</Badge>
+                      <Badge variant="secondary">{sourceCount} sources</Badge>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="rounded-2xl border border-zinc-200 bg-zinc-50/70 dark:border-zinc-800 dark:bg-zinc-900/50">
+                    <div className="flex items-center gap-2 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+                      <SparklesIcon className="size-4 text-[#9d1c1f]" />
+                      <p className="text-sm font-semibold">Conversation</p>
+                    </div>
+                    <ScrollArea className="h-[280px] px-4 py-4">
+                      <div className="space-y-3">
+                        {messages.map((message, index) => (
+                          <div
+                            key={`${message.role}-${index}`}
+                            className={cn(
+                              "max-w-[92%] rounded-2xl px-4 py-3 text-sm leading-6",
+                              message.role === "assistant"
+                                ? "bg-white text-foreground shadow-sm dark:bg-zinc-950"
+                                : "ml-auto bg-[#9d1c1f] text-white"
+                            )}
+                          >
+                            {message.text}
+                          </div>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  </div>
+
+                  <form className="space-y-3" onSubmit={(event) => void handleRefinementSubmit(event)}>
+                    <Textarea
+                      value={refinementPrompt}
+                      onChange={(event) => setRefinementPrompt(event.target.value)}
+                      placeholder="Example: Make the headline sharper, reduce text density in the lower cards, and use my uploaded portrait as the main hero image."
+                      className="min-h-28 resize-y bg-zinc-50 dark:bg-zinc-900"
+                    />
+
+                    <div className="flex flex-wrap gap-2">
+                      {QUICK_REFINEMENTS.map((item) => (
+                        <button
+                          key={item}
+                          type="button"
+                          className="rounded-full border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-left text-xs font-medium text-zinc-700 transition hover:border-[#9d1c1f] hover:text-[#9d1c1f] dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-200"
+                          onClick={() => setRefinementPrompt(item)}
+                        >
+                          {item}
+                        </button>
+                      ))}
+                    </div>
+
+                    {error ? (
+                      <div className="rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">
+                        {error}
+                      </div>
+                    ) : null}
+
+                    <div className="flex flex-wrap items-center gap-3">
+                      <Button type="submit" disabled={submitting} className="bg-[#9d1c1f] text-white hover:bg-[#82171a]">
+                        {submitting ? <LoaderIcon className="animate-spin" /> : <SendHorizonalIcon />}
+                        Update infographic
+                      </Button>
+                      <p className="text-sm text-muted-foreground">
+                        Follow-up requests reattach the current source URL and uploaded images automatically.
+                      </p>
+                    </div>
+                  </form>
+                </CardContent>
+              </Card>
+            ) : null}
 
             <Card className="border-zinc-200/70 bg-white/92 shadow-sm backdrop-blur dark:bg-zinc-950/70">
               <CardHeader>
