@@ -29,6 +29,7 @@ const INFOGRAPHIC_PRE_PROMPT = [
   "Treat every output as a fixed-layout editorial infographic, not a freeform poster.",
   "All copy must be layout-safe. No title, subtitle, stat, section heading, bullet, takeaway, or footer may overflow, clip, collide, or depend on tiny text to fit.",
   "Prefer shorter copy over fuller copy. If a fact does not fit cleanly, omit or compress it.",
+  "Never use ellipses, clipped phrases, placeholder copy, or visibly truncated labels as a way to force text into the layout.",
   "Use strong typography hierarchy. Title, subtitle, stats, section headings, and body text must each stay concise and visually distinct.",
   "Never produce empty information modules. Every stat card and section card must contain meaningful visible text.",
   "Enforce contrast discipline. White or near-white panels must use dark readable text. Dark panels may use white text. Do not use low-contrast muted text where content must be read.",
@@ -36,8 +37,21 @@ const INFOGRAPHIC_PRE_PROMPT = [
   "Use short slot-aware copy limits: title max 8 words, subtitle max 16 words, stat labels max 3 words, stat values compact, section headings max 3 words, section bullets max 12 words, takeaway max 24 words, footer compact.",
   "Assume each section card shows at most 1 to 2 short bullets. Write those bullets so they fit on one line when possible.",
   "Avoid source images whose own embedded text becomes unreadable when cropped. Prefer visuals that still work in tight portrait and thumbnail crops.",
+  "Do not add generic product chrome, platform branding, or filler labels unless the user explicitly asks for them.",
   "Use reference templates only for spacing, hierarchy, density, and presentation quality. Never copy their content.",
   "Before finalizing, self-check for clipped text, weak contrast, empty panels, awkward cropping, repeated points, and loose spacing."
+].join(" ")
+const INFOGRAPHIC_WORKFLOW = [
+  "Follow this workflow exactly before you return the infographic JSON.",
+  "1. Read the user prompt and every available source carefully, then identify only the really important points that must appear in the infographic.",
+  "2. Review all available visuals and identify the strongest images that are truly worth featuring. Prefer uploaded images first, then scraped images only when they add real context.",
+  "3. Based on the final amount of content and the available media, choose the most suitable editorial theme, layout rhythm, and visual hierarchy.",
+  "4. If no template is a strong fit, invent a cleaner custom theme instead of forcing a weak one.",
+  "5. Never solve space problems by shrinking text too far or by using ellipses. Rewrite copy shorter or remove lower-priority content instead.",
+  "6. If the draft feels overcrowded, aggressively cut semi-important points until the infographic feels sharp and intentional.",
+  "7. If the draft feels too empty, revisit the sources and add one or two more meaningful facts or modules, but only when they improve the composition.",
+  "8. Before finalizing, review the full infographic mentally and remove anything that feels off-topic, repetitive, awkwardly phrased, weakly supported, or visually out of balance.",
+  "9. The final output should feel polished, editorial, and story-specific, not like a generic CMS template."
 ].join(" ")
 const INFOGRAPHIC_RESPONSE_SCHEMA = {
   name: "infographic_response",
@@ -58,6 +72,10 @@ const INFOGRAPHIC_RESPONSE_SCHEMA = {
           subtitle: { type: "string" },
           takeaway: { type: "string" },
           footer: { type: "string" },
+          layoutVariant: {
+            type: "string",
+            enum: ["split-hero", "image-lead", "data-lead"],
+          },
           heroAssetIds: {
             type: "array",
             items: { type: "string" },
@@ -111,6 +129,7 @@ const INFOGRAPHIC_RESPONSE_SCHEMA = {
           "subtitle",
           "takeaway",
           "footer",
+          "layoutVariant",
           "palette",
           "stats",
           "sections",
@@ -497,6 +516,14 @@ function normalizeInfographic(value: Partial<InfographicSpec> | undefined, asset
 
   const heroAssetIds = normalizeStringList(value?.heroAssetIds, 2).filter((id) => assetIds.includes(id))
   const stripAssetIds = normalizeStringList(value?.stripAssetIds, 3).filter((id) => assetIds.includes(id))
+  const layoutVariant =
+    value?.layoutVariant === "image-lead" || value?.layoutVariant === "data-lead" || value?.layoutVariant === "split-hero"
+      ? value.layoutVariant
+      : assetIds.length >= 2 && stats.length <= 2
+        ? "image-lead"
+        : stats.length >= 3
+          ? "data-lead"
+          : DEFAULT_INFOGRAPHIC.layoutVariant
 
   return {
     title: typeof value?.title === "string" ? sanitizeText(value.title, 72) : DEFAULT_INFOGRAPHIC.title,
@@ -505,6 +532,7 @@ function normalizeInfographic(value: Partial<InfographicSpec> | undefined, asset
     takeaway:
       typeof value?.takeaway === "string" ? sanitizeText(value.takeaway, 160) : DEFAULT_INFOGRAPHIC.takeaway,
     footer: typeof value?.footer === "string" ? sanitizeText(value.footer, 90) : DEFAULT_INFOGRAPHIC.footer,
+    layoutVariant,
     palette: normalizePalette(value?.palette),
     stats,
     sections,
@@ -555,8 +583,10 @@ async function callOpenAI({
       content: [
         "You are an infographic-focused newsroom assistant. Your job is to turn a user's link, uploaded images, and instructions into a sharp infographic brief.",
         "Always prefer uploaded images over scraped link images when selecting visuals. Only use scraped images when they add clear context or when user uploads are insufficient.",
-        "Return valid JSON only with keys assistantMessage, infographic, and recommendedAssets. The infographic object must contain title, subtitle, takeaway, footer, palette, stats, sections, heroAssetIds, and stripAssetIds. Palette values must be 6-digit hex colors.",
+        "Return valid JSON only with keys assistantMessage, infographic, and recommendedAssets. The infographic object must contain title, subtitle, takeaway, footer, layoutVariant, palette, stats, sections, heroAssetIds, and stripAssetIds. Palette values must be 6-digit hex colors.",
+        "Choose layoutVariant deliberately from split-hero, image-lead, or data-lead based on the story's content density and visual strength.",
         "Keep sections concise and factual. Treat any reference templates as style inspiration only. Never copy or paraphrase their text, facts, subject matter, logos, maps, charts, or embedded images.",
+        INFOGRAPHIC_WORKFLOW,
         INFOGRAPHIC_PRE_PROMPT,
       ].join(" "),
     },
@@ -575,7 +605,9 @@ async function callOpenAI({
             sources.length > 0 ? `Scraped source context:\n${sourceSummary}` : "No source links were available.",
             assets.length > 0 ? `Available visual assets:\n${assetSummary}` : "No visual assets were available.",
             `Style-only template references:\n${templateSummary}`,
+            `Required workflow: ${INFOGRAPHIC_WORKFLOW}`,
             `Permanent layout safety rules: ${INFOGRAPHIC_PRE_PROMPT}`,
+            "Choose exactly one layoutVariant for the final infographic: split-hero for balanced explainers, image-lead when visuals should dominate, or data-lead when stats and modular facts carry the story.",
             "Prefer uploaded visuals first. If you recommend assets, list their ids with uploaded assets first whenever possible.",
             "Generate layout-safe copy: short title, compact subtitle, brief takeaway, concise stat labels, and short section bullets so the infographic remains presentable with no overlaps.",
             "Aim for editorial infographic quality with disciplined spacing, strong hierarchy, clear sectioning, and visually distinct information modules.",

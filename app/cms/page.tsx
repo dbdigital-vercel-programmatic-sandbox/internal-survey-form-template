@@ -25,6 +25,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { cn } from "@/lib/utils"
 import {
   type ChatMessage,
+  type InfographicLayoutVariant,
   type InfographicResponse,
   type InfographicSpec,
   type UploadedAsset,
@@ -81,10 +82,7 @@ function clampLines(lines: string[], maxLines: number) {
     return lines
   }
 
-  const nextLines = lines.slice(0, maxLines)
-  const lastLine = nextLines[maxLines - 1] ?? ""
-  nextLines[maxLines - 1] = lastLine.length > 3 ? `${lastLine.slice(0, -3)}...` : `${lastLine}...`
-  return nextLines
+  return lines.slice(0, maxLines)
 }
 
 function renderTextLines({
@@ -112,6 +110,268 @@ function renderTextLines({
     .join("")
 }
 
+function renderImageFrame(
+  asset: VisualAsset | null,
+  {
+    x,
+    y,
+    width,
+    height,
+    radius,
+    clipId,
+  }: {
+    x: number
+    y: number
+    width: number
+    height: number
+    radius: number
+    clipId: string
+  }
+) {
+  if (!asset) {
+    return `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${radius}" fill="#ffffff" />`
+  }
+
+  return [
+    `<clipPath id="${clipId}"><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${radius}" /></clipPath>`,
+    `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${radius}" fill="#ffffff" />`,
+    `<image href="${asset.dataUrl}" x="${x}" y="${y}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clipId})" />`,
+  ].join("")
+}
+
+function renderStatGrid({
+  stats,
+  palette,
+  x,
+  y,
+  width,
+  columns,
+  cardHeight,
+  gapX = 18,
+  gapY = 18,
+}: {
+  stats: InfographicSpec["stats"]
+  palette: InfographicSpec["palette"]
+  x: number
+  y: number
+  width: number
+  columns: number
+  cardHeight: number
+  gapX?: number
+  gapY?: number
+}) {
+  if (stats.length === 0) {
+    return { markup: "", height: 0 }
+  }
+
+  const safeColumns = Math.max(1, Math.min(columns, stats.length))
+  const cardWidth = (width - gapX * (safeColumns - 1)) / safeColumns
+  const rows = Math.ceil(stats.length / safeColumns)
+
+  return {
+    markup: stats
+      .map((stat, index) => {
+        const column = index % safeColumns
+        const row = Math.floor(index / safeColumns)
+        const cardX = x + column * (cardWidth + gapX)
+        const cardY = y + row * (cardHeight + gapY)
+        const valueLines = clampLines(wrapText(stat.value, cardWidth - 48, 34), 2)
+        const labelLines = clampLines(wrapText(stat.label, cardWidth - 48, 18), 2)
+        const valueStartY = cardY + 56
+        const labelStartY = valueStartY + valueLines.length * 40 + 14
+
+        return [
+          `<rect x="${cardX}" y="${cardY}" width="${cardWidth}" height="${cardHeight}" rx="22" fill="#ffffff" stroke="${palette.accent}" stroke-opacity="0.12" />`,
+          renderTextLines({
+            lines: valueLines,
+            x: cardX + 24,
+            y: valueStartY,
+            fontSize: 34,
+            lineHeight: 40,
+            color: palette.accent,
+            weight: 900,
+          }),
+          renderTextLines({
+            lines: labelLines,
+            x: cardX + 24,
+            y: labelStartY,
+            fontSize: 18,
+            lineHeight: 22,
+            color: palette.muted,
+            weight: 700,
+          }),
+        ].join("")
+      })
+      .join(""),
+    height: rows * cardHeight + Math.max(0, rows - 1) * gapY,
+  }
+}
+
+function renderStackSections({
+  sections,
+  palette,
+  x,
+  y,
+  width,
+  accentWidth = 232,
+}: {
+  sections: InfographicSpec["sections"]
+  palette: InfographicSpec["palette"]
+  x: number
+  y: number
+  width: number
+  accentWidth?: number
+}) {
+  if (sections.length === 0) {
+    return { markup: "", height: 0 }
+  }
+
+  const cardHeight = 152
+  const gap = 18
+
+  return {
+    markup: sections
+      .map((section, index) => {
+        const cardY = y + index * (cardHeight + gap)
+        const headingLines = clampLines(wrapText(section.heading, accentWidth - 52, 26), 2)
+        const bulletLines = section.body.slice(0, 2).map((item) => clampLines(wrapText(`• ${item}`, width - accentWidth - 74, 20), 1))
+        let cursorY = cardY + 34 + headingLines.length * 28
+
+        const textParts = [
+          `<rect x="${x}" y="${cardY}" width="${width}" height="${cardHeight}" rx="24" fill="#ffffff" stroke="${palette.accent}" stroke-opacity="0.1" />`,
+          `<rect x="${x}" y="${cardY}" width="${accentWidth}" height="${cardHeight}" rx="24" fill="${palette.accent}" />`,
+          renderTextLines({
+            lines: headingLines,
+            x: x + 26,
+            y: cardY + 50,
+            fontSize: 26,
+            lineHeight: 31,
+            color: "#ffffff",
+            weight: 800,
+          }),
+        ]
+
+        for (const lines of bulletLines) {
+          cursorY += 20
+          textParts.push(
+            renderTextLines({
+              lines,
+              x: x + accentWidth + 40,
+              y: cursorY,
+              fontSize: 20,
+              lineHeight: 24,
+              color: palette.text,
+              weight: 500,
+            })
+          )
+          cursorY += lines.length * 24
+        }
+
+        return textParts.join("")
+      })
+      .join(""),
+    height: sections.length * cardHeight + Math.max(0, sections.length - 1) * gap,
+  }
+}
+
+function renderColumnSections({
+  sections,
+  palette,
+  x,
+  y,
+  width,
+  columns,
+  cardHeight,
+  gapX = 18,
+  gapY = 18,
+}: {
+  sections: InfographicSpec["sections"]
+  palette: InfographicSpec["palette"]
+  x: number
+  y: number
+  width: number
+  columns: number
+  cardHeight: number
+  gapX?: number
+  gapY?: number
+}) {
+  if (sections.length === 0) {
+    return { markup: "", height: 0 }
+  }
+
+  const safeColumns = Math.max(1, Math.min(columns, sections.length))
+  const cardWidth = (width - gapX * (safeColumns - 1)) / safeColumns
+  const rows = Math.ceil(sections.length / safeColumns)
+
+  return {
+    markup: sections
+      .map((section, index) => {
+        const column = index % safeColumns
+        const row = Math.floor(index / safeColumns)
+        const cardX = x + column * (cardWidth + gapX)
+        const cardY = y + row * (cardHeight + gapY)
+        const headingLines = clampLines(wrapText(section.heading, cardWidth - 44, 24), 2)
+        const bulletLines = section.body.slice(0, 2).flatMap((item) => clampLines(wrapText(`• ${item}`, cardWidth - 50, 19), 2))
+
+        return [
+          `<rect x="${cardX}" y="${cardY}" width="${cardWidth}" height="${cardHeight}" rx="24" fill="#ffffff" stroke="${palette.accent}" stroke-opacity="0.1" />`,
+          `<rect x="${cardX}" y="${cardY}" width="${cardWidth}" height="10" rx="24" fill="${palette.accent}" />`,
+          renderTextLines({
+            lines: headingLines,
+            x: cardX + 22,
+            y: cardY + 52,
+            fontSize: 24,
+            lineHeight: 28,
+            color: palette.text,
+            weight: 800,
+          }),
+          renderTextLines({
+            lines: bulletLines,
+            x: cardX + 22,
+            y: cardY + 110,
+            fontSize: 19,
+            lineHeight: 24,
+            color: palette.muted,
+            weight: 600,
+          }),
+        ].join("")
+      })
+      .join(""),
+    height: rows * cardHeight + Math.max(0, rows - 1) * gapY,
+  }
+}
+
+function renderTakeawayBand(spec: InfographicSpec, y: number, height: number) {
+  return [
+    `<rect x="54" y="${y}" width="972" height="${height}" rx="28" fill="${spec.palette.accent}" />`,
+    renderTextLines({
+      lines: clampLines(wrapText(spec.takeaway, 914, 30), 2),
+      x: 88,
+      y: y + 64,
+      fontSize: 30,
+      lineHeight: 36,
+      color: "#ffffff",
+      weight: 800,
+    }),
+  ].join("")
+}
+
+function resolveLayoutVariant(spec: InfographicSpec, assetCount: number): InfographicLayoutVariant {
+  if (spec.layoutVariant === "split-hero" || spec.layoutVariant === "image-lead" || spec.layoutVariant === "data-lead") {
+    return spec.layoutVariant
+  }
+
+  if (assetCount >= 2 && spec.stats.length <= 2) {
+    return "image-lead"
+  }
+
+  if (spec.stats.length >= 3) {
+    return "data-lead"
+  }
+
+  return "split-hero"
+}
+
 function buildInfographicSvg(spec: InfographicSpec, assets: VisualAsset[]) {
   const assetMap = new Map(assets.map((asset) => [asset.id, asset]))
   const preferredHeroIds = [...spec.heroAssetIds, ...spec.stripAssetIds]
@@ -119,133 +379,130 @@ function buildInfographicSvg(spec: InfographicSpec, assets: VisualAsset[]) {
   const supportAssets = spec.stripAssetIds
     .map((id) => assetMap.get(id))
     .filter((asset): asset is VisualAsset => Boolean(asset))
+    .filter((asset) => asset.id !== heroAsset?.id)
     .slice(0, 2)
 
-  if (supportAssets.length === 0 && heroAsset) {
-    supportAssets.push(heroAsset)
+  if (supportAssets.length === 0) {
+    supportAssets.push(...assets.filter((asset) => asset.id !== heroAsset?.id).slice(0, 2))
   }
 
   const palette = spec.palette
-  const titleLines = clampLines(wrapText(spec.title, 560, 54), 3)
-  const subtitleLines = clampLines(wrapText(spec.subtitle, 560, 24), 3)
-  const takeawayLines = clampLines(wrapText(spec.takeaway, 940, 32), 2)
   const sections = spec.sections.slice(0, 3)
   const stats = spec.stats.slice(0, 4)
+  const layoutVariant = resolveLayoutVariant(spec, assets.length)
 
-  const supportMarkup = supportAssets
-    .map((asset, index) => {
-      const width = 140
-      const height = 116
-      const x = 734 + index * 152
-      const y = 486
-      const clipId = `support-clip-${index}`
-
-      return [
-        `<clipPath id="${clipId}"><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="18" /></clipPath>`,
-        `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="18" fill="#ffffff" />`,
-        `<image href="${asset.dataUrl}" x="${x}" y="${y}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clipId})" />`,
-      ].join("")
+  if (layoutVariant === "image-lead") {
+    const titleLines = clampLines(wrapText(spec.title, 320, 52), 4)
+    const subtitleLines = clampLines(wrapText(spec.subtitle, 320, 24), 4)
+    const statGrid = renderStatGrid({ stats, palette, x: 54, y: 634, width: 972, columns: 2, cardHeight: 148, gapX: 20, gapY: 20 })
+    const sectionGrid = renderColumnSections({
+      sections,
+      palette,
+      x: 54,
+      y: 634 + statGrid.height + 38,
+      width: 972,
+      columns: Math.min(3, Math.max(1, sections.length)),
+      cardHeight: 270,
+      gapX: 18,
+      gapY: 18,
     })
-    .join("")
+    const takeawayY = 634 + statGrid.height + 38 + sectionGrid.height + 34
+    const supportMarkup = supportAssets
+      .map((asset, index) => renderImageFrame(asset, { x: 816 + index * 104, y: 500, width: 92, height: 74, radius: 16, clipId: `image-lead-support-${index}` }))
+      .join("")
 
-  const statCards = stats
-    .map((stat, index) => {
-      const cardWidth = 225
-      const cardHeight = 150
-      const gap = 18
-      const x = 54 + index * (cardWidth + gap)
-      const y = 644
-      const valueLines = clampLines(wrapText(stat.value, 177, 34), 2)
-      const labelLines = clampLines(wrapText(stat.label, 177, 18), 2)
-      const valueStartY = y + 56
-      const labelStartY = valueStartY + valueLines.length * 40 + 16
-
-      return [
-        `<rect x="${x}" y="${y}" width="${cardWidth}" height="${cardHeight}" rx="22" fill="#ffffff" stroke="${palette.accent}" stroke-opacity="0.12" />`,
-        renderTextLines({
-          lines: valueLines,
-          x: x + 24,
-          y: valueStartY,
-          fontSize: 34,
-          lineHeight: 40,
-          color: palette.accent,
+    return `
+      <svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS_WIDTH}" height="${CANVAS_HEIGHT}" viewBox="0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}">
+        <rect width="1080" height="1600" fill="${palette.background}" />
+        <rect x="54" y="108" width="394" height="478" rx="30" fill="${palette.surface}" />
+        <rect x="54" y="108" width="394" height="10" fill="${palette.accent}" />
+        ${renderImageFrame(heroAsset, { x: 472, y: 108, width: 554, height: 478, radius: 30, clipId: "image-lead-hero" })}
+        ${supportMarkup}
+        ${renderTextLines({
+          lines: titleLines,
+          x: 88,
+          y: 190,
+          fontSize: 52,
+          lineHeight: 58,
+          color: palette.text,
           weight: 900,
-        }),
-        renderTextLines({
-          lines: labelLines,
-          x: x + 24,
-          y: labelStartY,
-          fontSize: 18,
-          lineHeight: 22,
+        })}
+        ${renderTextLines({
+          lines: subtitleLines,
+          x: 88,
+          y: 432,
+          fontSize: 24,
+          lineHeight: 30,
           color: palette.muted,
-          weight: 700,
-        }),
-      ].join("")
-    })
+          weight: 600,
+        })}
+        <line x1="54" y1="606" x2="1026" y2="606" stroke="${palette.accent}" stroke-opacity="0.18" stroke-width="3" />
+        ${statGrid.markup}
+        ${sectionGrid.markup}
+        ${renderTakeawayBand(spec, takeawayY, 132)}
+        <text x="54" y="1566" fill="${palette.muted}" font-size="18" font-weight="700" font-family="Inter, Arial, sans-serif">${escapeXml(spec.footer)}</text>
+      </svg>
+    `.trim()
+  }
+
+  if (layoutVariant === "data-lead") {
+    const titleLines = clampLines(wrapText(spec.title, 840, 52), 3)
+    const subtitleLines = clampLines(wrapText(spec.subtitle, 840, 24), 3)
+    const statGrid = renderStatGrid({ stats, palette, x: 54, y: 364, width: 634, columns: 2, cardHeight: 156 })
+    const sectionStack = renderStackSections({ sections, palette, x: 54, y: 730, width: 972, accentWidth: 220 })
+    const supportMarkup = supportAssets
+      .map((asset, index) => renderImageFrame(asset, { x: 718 + index * 150, y: 606, width: 140, height: 88, radius: 18, clipId: `data-lead-support-${index}` }))
+      .join("")
+
+    return `
+      <svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS_WIDTH}" height="${CANVAS_HEIGHT}" viewBox="0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}">
+        <rect width="1080" height="1600" fill="${palette.background}" />
+        <rect x="54" y="108" width="972" height="214" rx="30" fill="${palette.surface}" />
+        <rect x="54" y="108" width="972" height="10" fill="${palette.accent}" />
+        ${renderTextLines({
+          lines: titleLines,
+          x: 88,
+          y: 190,
+          fontSize: 52,
+          lineHeight: 58,
+          color: palette.text,
+          weight: 900,
+        })}
+        ${renderTextLines({
+          lines: subtitleLines,
+          x: 88,
+          y: 286,
+          fontSize: 24,
+          lineHeight: 30,
+          color: palette.muted,
+          weight: 600,
+        })}
+        ${statGrid.markup}
+        ${renderImageFrame(heroAsset, { x: 718, y: 364, width: 308, height: 224, radius: 28, clipId: "data-lead-hero" })}
+        ${supportMarkup}
+        <line x1="54" y1="712" x2="1026" y2="712" stroke="${palette.accent}" stroke-opacity="0.18" stroke-width="3" />
+        ${sectionStack.markup}
+        ${renderTakeawayBand(spec, 1288, 128)}
+        <text x="54" y="1566" fill="${palette.muted}" font-size="18" font-weight="700" font-family="Inter, Arial, sans-serif">${escapeXml(spec.footer)}</text>
+      </svg>
+    `.trim()
+  }
+
+  const titleLines = clampLines(wrapText(spec.title, 560, 54), 3)
+  const subtitleLines = clampLines(wrapText(spec.subtitle, 560, 24), 3)
+  const statGrid = renderStatGrid({ stats, palette, x: 54, y: 644, width: 972, columns: 4, cardHeight: 150 })
+  const sectionStack = renderStackSections({ sections, palette, x: 54, y: 644 + statGrid.height + 52, width: 972 })
+  const supportMarkup = supportAssets
+    .map((asset, index) => renderImageFrame(asset, { x: 734 + index * 152, y: 486, width: 140, height: 116, radius: 18, clipId: `split-support-${index}` }))
     .join("")
-
-  const sectionCards = sections
-    .map((section, index) => {
-      const x = 54
-      const y = 846 + index * 180
-      const headingLines = clampLines(wrapText(section.heading, 250, 26), 2)
-      const bulletLines = section.body
-        .slice(0, 2)
-        .map((item) => clampLines(wrapText(`• ${item}`, 620, 20), 1))
-      let cursorY = y + 34
-
-      const textParts = [
-        `<rect x="${x}" y="${y}" width="972" height="152" rx="24" fill="#ffffff" stroke="${palette.accent}" stroke-opacity="0.1" />`,
-        `<rect x="${x}" y="${y}" width="232" height="152" rx="24" fill="${palette.accent}" />`,
-        renderTextLines({
-          lines: headingLines,
-          x: x + 26,
-          y: y + 50,
-          fontSize: 26,
-          lineHeight: 31,
-          color: "#ffffff",
-          weight: 800,
-        }),
-      ]
-
-      cursorY += headingLines.length * 28
-      for (const lines of bulletLines) {
-        cursorY += 20
-        textParts.push(
-          renderTextLines({
-            lines,
-            x: x + 272,
-            y: cursorY,
-            fontSize: 20,
-            lineHeight: 24,
-            color: palette.text,
-            weight: 500,
-          })
-        )
-        cursorY += lines.length * 24
-      }
-
-      return textParts.join("")
-    })
-    .join("")
-
-  const heroMarkup = heroAsset
-    ? [
-        `<clipPath id="hero-clip"><rect x="734" y="118" width="292" height="350" rx="28" /></clipPath>`,
-        `<rect x="734" y="118" width="292" height="350" rx="28" fill="#ffffff" />`,
-        `<image href="${heroAsset.dataUrl}" x="734" y="118" width="292" height="350" preserveAspectRatio="xMidYMid slice" clip-path="url(#hero-clip)" />`,
-      ].join("")
-    : `<rect x="734" y="118" width="292" height="350" rx="28" fill="#ffffff" />`
+  const takeawayY = 644 + statGrid.height + 52 + sectionStack.height + 42
 
   return `
     <svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS_WIDTH}" height="${CANVAS_HEIGHT}" viewBox="0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}">
       <rect width="1080" height="1600" fill="${palette.background}" />
-      <rect x="0" y="0" width="1080" height="76" fill="${palette.accent}" />
-      <text x="54" y="48" fill="#ffffff" font-size="28" font-weight="800" font-family="Inter, Arial, sans-serif">CMS INFOGRAPHIC STUDIO</text>
       <rect x="54" y="108" width="652" height="496" rx="30" fill="${palette.surface}" />
       <rect x="54" y="108" width="652" height="10" fill="${palette.accent}" />
-      <text x="88" y="152" fill="${palette.accent}" font-size="16" font-weight="800" font-family="Inter, Arial, sans-serif">EDITORIAL EXPLAINER</text>
-      ${heroMarkup}
+      ${renderImageFrame(heroAsset, { x: 734, y: 118, width: 292, height: 350, radius: 28, clipId: "split-hero" })}
       ${supportMarkup}
       ${renderTextLines({
         lines: titleLines,
@@ -266,19 +523,9 @@ function buildInfographicSvg(spec: InfographicSpec, assets: VisualAsset[]) {
         weight: 600,
       })}
       <line x1="54" y1="622" x2="1026" y2="622" stroke="${palette.accent}" stroke-opacity="0.18" stroke-width="3" />
-      ${statCards}
-      <text x="54" y="826" fill="${palette.accent}" font-size="18" font-weight="800" font-family="Inter, Arial, sans-serif">KEY POINTS</text>
-      ${sectionCards}
-      <rect x="54" y="1408" width="972" height="114" rx="28" fill="${palette.accent}" />
-      ${renderTextLines({
-        lines: takeawayLines,
-        x: 88,
-        y: 1472,
-        fontSize: 30,
-        lineHeight: 36,
-        color: "#ffffff",
-        weight: 800,
-      })}
+      ${statGrid.markup}
+      ${sectionStack.markup}
+      ${renderTakeawayBand(spec, takeawayY, 114)}
       <text x="54" y="1566" fill="${palette.muted}" font-size="18" font-weight="700" font-family="Inter, Arial, sans-serif">${escapeXml(spec.footer)}</text>
     </svg>
   `.trim()
@@ -716,7 +963,7 @@ export default function CmsPage() {
                     <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900">
                       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Structure</p>
                       <p className="mt-2 text-sm leading-6 text-foreground/85">
-                        {result.infographic.stats.length} stats, {result.infographic.sections.length} sections, {result.infographic.heroAssetIds.length} hero picks
+                        {result.infographic.layoutVariant}, {result.infographic.stats.length} stats, {result.infographic.sections.length} sections, {result.infographic.heroAssetIds.length} hero picks
                       </p>
                     </div>
                   </div>

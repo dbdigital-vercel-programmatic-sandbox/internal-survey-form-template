@@ -49,11 +49,14 @@ export type InfographicSection = {
   body: string[]
 }
 
+export type InfographicLayoutVariant = "split-hero" | "image-lead" | "data-lead"
+
 export type InfographicSpec = {
   title: string
   subtitle: string
   takeaway: string
   footer: string
+  layoutVariant: InfographicLayoutVariant
   palette: InfographicPalette
   stats: InfographicStat[]
   sections: InfographicSection[]
@@ -72,7 +75,8 @@ export const DEFAULT_INFOGRAPHIC: InfographicSpec = {
   title: "Infographic Draft",
   subtitle: "Add a source link and a few images to generate a sharper visual summary.",
   takeaway: "User-provided images are given highest priority during layout selection.",
-  footer: "Generated in CMS Studio",
+  footer: "Editorial infographic draft",
+  layoutVariant: "split-hero",
   palette: {
     background: "#f4efe7",
     surface: "#fffaf2",
