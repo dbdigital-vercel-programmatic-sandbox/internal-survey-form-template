@@ -25,6 +25,20 @@ const MAX_SOURCE_IMAGES = 6
 const MAX_MEDIA_FOR_MODEL = 6
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024
 const SUPPORTED_MODEL_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"])
+const INFOGRAPHIC_PRE_PROMPT = [
+  "Treat every output as a fixed-layout editorial infographic, not a freeform poster.",
+  "All copy must be layout-safe. No title, subtitle, stat, section heading, bullet, takeaway, or footer may overflow, clip, collide, or depend on tiny text to fit.",
+  "Prefer shorter copy over fuller copy. If a fact does not fit cleanly, omit or compress it.",
+  "Use strong typography hierarchy. Title, subtitle, stats, section headings, and body text must each stay concise and visually distinct.",
+  "Never produce empty information modules. Every stat card and section card must contain meaningful visible text.",
+  "Enforce contrast discipline. White or near-white panels must use dark readable text. Dark panels may use white text. Do not use low-contrast muted text where content must be read.",
+  "Choose a palette that is safe for the actual layout: accent areas must remain readable with white text, and white content cards must remain readable with dark body text.",
+  "Use short slot-aware copy limits: title max 8 words, subtitle max 16 words, stat labels max 3 words, stat values compact, section headings max 3 words, section bullets max 12 words, takeaway max 24 words, footer compact.",
+  "Assume each section card shows at most 1 to 2 short bullets. Write those bullets so they fit on one line when possible.",
+  "Avoid source images whose own embedded text becomes unreadable when cropped. Prefer visuals that still work in tight portrait and thumbnail crops.",
+  "Use reference templates only for spacing, hierarchy, density, and presentation quality. Never copy their content.",
+  "Before finalizing, self-check for clipped text, weak contrast, empty panels, awkward cropping, repeated points, and loose spacing."
+].join(" ")
 const INFOGRAPHIC_RESPONSE_SCHEMA = {
   name: "infographic_response",
   schema: {
@@ -335,13 +349,68 @@ function isHexColor(value: string) {
 }
 
 function normalizePalette(palette: Partial<InfographicSpec["palette"]> | undefined) {
+  const background = isHexColor(palette?.background ?? "") ? palette!.background! : DEFAULT_INFOGRAPHIC.palette.background
+  const surface = isHexColor(palette?.surface ?? "") ? palette!.surface! : DEFAULT_INFOGRAPHIC.palette.surface
+  const accentCandidate = isHexColor(palette?.accent ?? "") ? palette!.accent! : DEFAULT_INFOGRAPHIC.palette.accent
+  const textCandidate = isHexColor(palette?.text ?? "") ? palette!.text! : DEFAULT_INFOGRAPHIC.palette.text
+  const mutedCandidate = isHexColor(palette?.muted ?? "") ? palette!.muted! : DEFAULT_INFOGRAPHIC.palette.muted
+
+  const accent = contrastRatio("#ffffff", accentCandidate) >= 4.5 ? accentCandidate : DEFAULT_INFOGRAPHIC.palette.accent
+  const text =
+    contrastRatio(textCandidate, surface) >= 4.5
+      ? textCandidate
+      : bestReadableText(surface, [DEFAULT_INFOGRAPHIC.palette.text, "#111827", "#0f172a", "#ffffff"])
+  const muted =
+    contrastRatio(mutedCandidate, surface) >= 3
+      ? mutedCandidate
+      : bestReadableText(surface, [DEFAULT_INFOGRAPHIC.palette.muted, text, "#374151", "#6b7280"])
+
   return {
-    background: isHexColor(palette?.background ?? "") ? palette!.background! : DEFAULT_INFOGRAPHIC.palette.background,
-    surface: isHexColor(palette?.surface ?? "") ? palette!.surface! : DEFAULT_INFOGRAPHIC.palette.surface,
-    accent: isHexColor(palette?.accent ?? "") ? palette!.accent! : DEFAULT_INFOGRAPHIC.palette.accent,
-    text: isHexColor(palette?.text ?? "") ? palette!.text! : DEFAULT_INFOGRAPHIC.palette.text,
-    muted: isHexColor(palette?.muted ?? "") ? palette!.muted! : DEFAULT_INFOGRAPHIC.palette.muted,
+    background,
+    surface,
+    accent,
+    text,
+    muted,
   }
+}
+
+function hexToRgb(value: string) {
+  const normalized = value.replace("#", "")
+  if (normalized.length !== 6) {
+    return null
+  }
+
+  return {
+    r: Number.parseInt(normalized.slice(0, 2), 16),
+    g: Number.parseInt(normalized.slice(2, 4), 16),
+    b: Number.parseInt(normalized.slice(4, 6), 16),
+  }
+}
+
+function relativeLuminance(value: string) {
+  const rgb = hexToRgb(value)
+  if (!rgb) {
+    return 0
+  }
+
+  const channels = [rgb.r, rgb.g, rgb.b].map((channel) => {
+    const normalized = channel / 255
+    return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4
+  })
+
+  return 0.2126 * channels[0]! + 0.7152 * channels[1]! + 0.0722 * channels[2]!
+}
+
+function contrastRatio(foreground: string, background: string) {
+  const lighter = Math.max(relativeLuminance(foreground), relativeLuminance(background))
+  const darker = Math.min(relativeLuminance(foreground), relativeLuminance(background))
+  return (lighter + 0.05) / (darker + 0.05)
+}
+
+function bestReadableText(background: string, candidates: string[]) {
+  return candidates
+    .filter(isHexColor)
+    .sort((left, right) => contrastRatio(right, background) - contrastRatio(left, background))[0] ?? DEFAULT_INFOGRAPHIC.palette.text
 }
 
 function normalizeStringList(value: unknown, maxItems: number) {
@@ -401,35 +470,41 @@ function normalizeInfographic(value: Partial<InfographicSpec> | undefined, asset
   const stats = Array.isArray(value?.stats)
     ? value.stats
         .map((item) => {
-          const label = typeof item?.label === "string" ? sanitizeText(item.label, 80) : ""
-          const statValue = typeof item?.value === "string" ? sanitizeText(item.value, 40) : ""
+          const label = typeof item?.label === "string" ? sanitizeText(item.label, 28) : ""
+          const statValue = typeof item?.value === "string" ? sanitizeText(item.value, 28) : ""
           return label && statValue ? { label, value: statValue } : null
         })
         .filter((item): item is { label: string; value: string } => Boolean(item))
-        .slice(0, 6)
+        .slice(0, 4)
     : []
 
   const sections = Array.isArray(value?.sections)
     ? value.sections
         .map((item) => {
-          const heading = typeof item?.heading === "string" ? sanitizeText(item.heading, 80) : ""
-          const body = normalizeStringList(item?.body, 4)
+          const heading = typeof item?.heading === "string" ? sanitizeText(item.heading, 32) : ""
+          const body = Array.isArray(item?.body)
+            ? item.body
+                .filter((entry): entry is string => typeof entry === "string")
+                .map((entry) => sanitizeText(entry, 72))
+                .filter(Boolean)
+                .slice(0, 2)
+            : []
           return heading && body.length > 0 ? { heading, body } : null
         })
         .filter((item): item is { heading: string; body: string[] } => Boolean(item))
-        .slice(0, 4)
+        .slice(0, 3)
     : []
 
   const heroAssetIds = normalizeStringList(value?.heroAssetIds, 2).filter((id) => assetIds.includes(id))
   const stripAssetIds = normalizeStringList(value?.stripAssetIds, 3).filter((id) => assetIds.includes(id))
 
   return {
-    title: typeof value?.title === "string" ? sanitizeText(value.title, 150) : DEFAULT_INFOGRAPHIC.title,
+    title: typeof value?.title === "string" ? sanitizeText(value.title, 72) : DEFAULT_INFOGRAPHIC.title,
     subtitle:
-      typeof value?.subtitle === "string" ? sanitizeText(value.subtitle, 260) : DEFAULT_INFOGRAPHIC.subtitle,
+      typeof value?.subtitle === "string" ? sanitizeText(value.subtitle, 140) : DEFAULT_INFOGRAPHIC.subtitle,
     takeaway:
-      typeof value?.takeaway === "string" ? sanitizeText(value.takeaway, 220) : DEFAULT_INFOGRAPHIC.takeaway,
-    footer: typeof value?.footer === "string" ? sanitizeText(value.footer, 120) : DEFAULT_INFOGRAPHIC.footer,
+      typeof value?.takeaway === "string" ? sanitizeText(value.takeaway, 160) : DEFAULT_INFOGRAPHIC.takeaway,
+    footer: typeof value?.footer === "string" ? sanitizeText(value.footer, 90) : DEFAULT_INFOGRAPHIC.footer,
     palette: normalizePalette(value?.palette),
     stats,
     sections,
@@ -477,8 +552,13 @@ async function callOpenAI({
   const messages = [
     {
       role: "system",
-      content:
-        "You are an infographic-focused newsroom assistant. Your job is to turn a user's link, uploaded images, and instructions into a sharp infographic brief. Always prefer uploaded images over scraped link images when selecting visuals. Only use scraped images when they add clear context or when user uploads are insufficient. Return valid JSON only with keys assistantMessage, infographic, and recommendedAssets. The infographic object must contain title, subtitle, takeaway, footer, palette, stats, sections, heroAssetIds, and stripAssetIds. Palette values must be 6-digit hex colors. Keep sections concise and factual. Optimize for a clean, presentable layout: avoid verbose copy, avoid repeated points, keep title and subtitle compact, keep stat labels short, and write section bullets short enough to fit without visual overlap. Treat any reference templates as style inspiration only. Never copy or paraphrase their text, facts, subject matter, logos, maps, charts, or embedded images.",
+      content: [
+        "You are an infographic-focused newsroom assistant. Your job is to turn a user's link, uploaded images, and instructions into a sharp infographic brief.",
+        "Always prefer uploaded images over scraped link images when selecting visuals. Only use scraped images when they add clear context or when user uploads are insufficient.",
+        "Return valid JSON only with keys assistantMessage, infographic, and recommendedAssets. The infographic object must contain title, subtitle, takeaway, footer, palette, stats, sections, heroAssetIds, and stripAssetIds. Palette values must be 6-digit hex colors.",
+        "Keep sections concise and factual. Treat any reference templates as style inspiration only. Never copy or paraphrase their text, facts, subject matter, logos, maps, charts, or embedded images.",
+        INFOGRAPHIC_PRE_PROMPT,
+      ].join(" "),
     },
     ...history.slice(-MAX_HISTORY_MESSAGES).map((message) => ({
       role: message.role,
@@ -495,6 +575,7 @@ async function callOpenAI({
             sources.length > 0 ? `Scraped source context:\n${sourceSummary}` : "No source links were available.",
             assets.length > 0 ? `Available visual assets:\n${assetSummary}` : "No visual assets were available.",
             `Style-only template references:\n${templateSummary}`,
+            `Permanent layout safety rules: ${INFOGRAPHIC_PRE_PROMPT}`,
             "Prefer uploaded visuals first. If you recommend assets, list their ids with uploaded assets first whenever possible.",
             "Generate layout-safe copy: short title, compact subtitle, brief takeaway, concise stat labels, and short section bullets so the infographic remains presentable with no overlaps.",
             "Aim for editorial infographic quality with disciplined spacing, strong hierarchy, clear sectioning, and visually distinct information modules.",

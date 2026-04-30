@@ -517,7 +517,7 @@ export default function CmsPage() {
                   <Badge className="bg-[#9d1c1f] text-white hover:bg-[#9d1c1f]">/cms</Badge>
                   <CardTitle className="mt-3 text-2xl">Infographic Chat Studio</CardTitle>
                 </div>
-                <Badge variant="secondary">GPT-4.1 mini</Badge>
+                <Badge variant="secondary">GPT-4.1 / GPT-4.1 mini</Badge>
               </div>
               <p className="text-sm leading-6 text-muted-foreground">
                 Paste a story link, attach a few images, and iterate on the same draft naturally. Every link is scraped for text and images before generation, while uploaded images stay highest priority.
