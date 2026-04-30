@@ -954,7 +954,7 @@ export default function CmsPage() {
                 <Badge variant="secondary">GPT-5.3 chat + image render</Badge>
               </div>
               <p className="text-sm leading-6 text-muted-foreground">
-                Paste a story link, attach a few images, and iterate on the same draft naturally. The pipeline now extracts facts, builds art direction, generates a final image, and falls back to the internal renderer only if image generation fails.
+                Paste a story link, attach a few images, and iterate on the same draft naturally. The pipeline now extracts facts, builds art direction, and generates a final image. If image generation fails, the request now errors instead of showing a fallback as a finished result.
               </p>
               <p className="text-xs leading-5 text-muted-foreground">
                 Style-reference infographic samples can be added at `public/cms-templates/`. They are used only for layout and visual quality guidance, never for factual content or image reuse.
@@ -1119,7 +1119,7 @@ export default function CmsPage() {
                 <div>
                   <CardTitle>Generated infographic</CardTitle>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Model-rendered image when available, with the richer SVG renderer as a fallback.
+                    Only the model-rendered final image is treated as success.
                   </p>
                 </div>
 
@@ -1137,9 +1137,9 @@ export default function CmsPage() {
                           <DownloadIcon />
                           SVG
                         </Button>
-                        <Button type="button" variant="outline" size="sm" onClick={() => void downloadPng(svg, "cms-infographic-fallback") }>
+                        <Button type="button" variant="outline" size="sm" onClick={() => void downloadPng(svg, "cms-infographic-preview") }>
                           <DownloadIcon />
-                          Fallback PNG
+                          Preview PNG
                         </Button>
                       </>
                     ) : null}
@@ -1165,7 +1165,7 @@ export default function CmsPage() {
                     </div>
                     <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900">
                       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Render</p>
-                      <p className="mt-2 text-sm leading-6 text-foreground/85">{result.renderMode === "model-image" ? `Image model: ${result.finalImage.model}` : `Fallback renderer: ${result.finalImage.error ?? "image unavailable"}`}</p>
+                      <p className="mt-2 text-sm leading-6 text-foreground/85">Image model: {result.finalImage.model}</p>
                     </div>
                   </div>
                 ) : null}
@@ -1316,7 +1316,7 @@ export default function CmsPage() {
                   </div>
                 ) : (
                   <p className="text-sm leading-6 text-muted-foreground">
-                    When you include a story link, the server fetches the page, extracts readable text, collects media links, turns them into a structured facts plan, writes an art-direction prompt, and then attempts a final image render before falling back to the internal SVG renderer.
+                    When you include a story link, the server fetches the page, extracts readable text, collects media links, turns them into a structured facts plan, writes an art-direction prompt, and then attempts a final image render. If that render fails, the request now returns an error instead of pretending the backup preview is a final output.
                   </p>
                 )}
 

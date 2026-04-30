@@ -1125,21 +1125,26 @@ export async function POST(request: Request) {
       infographic
     )
     const finalImage = await generateFinalImage({ infographic, facts, artDirection })
+
+    if (finalImage.status !== "generated" || !finalImage.dataUrl) {
+      return NextResponse.json(
+        {
+          error: `Final image generation failed: ${finalImage.error ?? "no image was returned by the model."}`,
+        },
+        { status: 502 }
+      )
+    }
+
     const qa = normalizeQa(await callQaModel({ infographic, facts, artDirection, finalImage }))
-    const renderMode = finalImage.status === "generated" ? "model-image" : "svg-fallback"
+    const renderMode = "model-image"
 
     const assistantMessageSource =
       typeof factsResult.assistantMessage === "string"
         ? sanitizeText(factsResult.assistantMessage, 900)
-        : `Built a ${renderMode === "model-image" ? "model-rendered" : "fallback-rendered"} infographic draft with ${facts.length} key facts and ${infographic.sections.length} content modules.`
-
-    const assistantMessage =
-      finalImage.status === "generated"
-        ? assistantMessageSource
-        : `${assistantMessageSource} Image generation fell back to the internal renderer: ${finalImage.error ?? "unknown error"}`
+        : `Built a model-rendered infographic draft with ${facts.length} key facts and ${infographic.sections.length} content modules.`
 
     const result: InfographicResponse = {
-      assistantMessage,
+      assistantMessage: assistantMessageSource,
       infographic,
       facts,
       artDirection,
