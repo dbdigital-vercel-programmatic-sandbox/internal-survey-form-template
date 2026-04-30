@@ -22,6 +22,7 @@ import {
 
 const CHAT_API_URL = "https://ai-gateway.vercel.sh/v1/chat/completions"
 const IMAGE_API_URL = "https://ai-gateway.vercel.sh/v1/images/generations"
+const IMAGE_EDIT_API_URL = "https://ai-gateway.vercel.sh/v1/images/edits"
 const FACTS_MODEL_ID = process.env.CMS_INFOGRAPHIC_FACTS_MODEL ?? "openai/gpt-5.3-chat"
 const ART_DIRECTION_MODEL_ID = process.env.CMS_INFOGRAPHIC_ART_MODEL ?? "openai/gpt-5.3-chat"
 const QA_MODEL_ID = process.env.CMS_INFOGRAPHIC_QA_MODEL ?? "openai/gpt-5.3-chat"
@@ -38,6 +39,68 @@ const INFOGRAPHIC_LAYOUT_VARIANTS = [
   "editorial-mosaic",
   "timeline-focus",
 ] as const
+
+type ThemePaletteKey = Exclude<keyof typeof THEME_PALETTES, "general">
+
+const THEME_PALETTES = {
+  politics: {
+    background: "#f4efe7",
+    surface: "#fffaf2",
+    accent: "#9d1c1f",
+    text: "#111827",
+    muted: "#4b5563",
+  },
+  business: {
+    background: "#eef4f1",
+    surface: "#fbfefc",
+    accent: "#0f766e",
+    text: "#0f172a",
+    muted: "#475569",
+  },
+  technology: {
+    background: "#eef2ff",
+    surface: "#f8faff",
+    accent: "#4338ca",
+    text: "#111827",
+    muted: "#475569",
+  },
+  health: {
+    background: "#eef8f5",
+    surface: "#fbfffd",
+    accent: "#0f766e",
+    text: "#0f172a",
+    muted: "#52606d",
+  },
+  environment: {
+    background: "#eef7ed",
+    surface: "#fbfffa",
+    accent: "#2f6f3e",
+    text: "#17212b",
+    muted: "#52606d",
+  },
+  sports: {
+    background: "#fff5eb",
+    surface: "#fffdf8",
+    accent: "#c2410c",
+    text: "#111827",
+    muted: "#4b5563",
+  },
+  crisis: {
+    background: "#f7f1ed",
+    surface: "#fffaf7",
+    accent: "#b45309",
+    text: "#1f2937",
+    muted: "#5b6472",
+  },
+  culture: {
+    background: "#faf0f6",
+    surface: "#fffafd",
+    accent: "#a21caf",
+    text: "#1f2937",
+    muted: "#5b6472",
+  },
+  general: DEFAULT_INFOGRAPHIC.palette,
+} satisfies Record<string, InfographicSpec["palette"]>
 
 const FACTS_SCHEMA = {
   name: "infographic_facts",
@@ -464,22 +527,84 @@ function bestReadableText(background: string, candidates: string[]) {
   return candidates.filter(isHexColor).sort((left, right) => contrastRatio(right, background) - contrastRatio(left, background))[0] ?? DEFAULT_INFOGRAPHIC.palette.text
 }
 
-function normalizePalette(palette: Partial<InfographicSpec["palette"]> | undefined) {
-  const background = isHexColor(palette?.background ?? "") ? palette!.background! : DEFAULT_INFOGRAPHIC.palette.background
-  const surface = isHexColor(palette?.surface ?? "") ? palette!.surface! : DEFAULT_INFOGRAPHIC.palette.surface
-  const accentCandidate = isHexColor(palette?.accent ?? "") ? palette!.accent! : DEFAULT_INFOGRAPHIC.palette.accent
-  const textCandidate = isHexColor(palette?.text ?? "") ? palette!.text! : DEFAULT_INFOGRAPHIC.palette.text
-  const mutedCandidate = isHexColor(palette?.muted ?? "") ? palette!.muted! : DEFAULT_INFOGRAPHIC.palette.muted
+function keywordScore(haystack: string, keywords: string[]) {
+  return keywords.reduce((score, keyword) => score + (haystack.includes(keyword) ? 1 : 0), 0)
+}
 
-  const accent = contrastRatio("#ffffff", accentCandidate) >= 4.5 ? accentCandidate : DEFAULT_INFOGRAPHIC.palette.accent
+function selectThemePalette({
+  prompt,
+  sources,
+}: {
+  prompt: string
+  sources: ExtractedSource[]
+}) {
+  const haystack = [
+    prompt,
+    ...sources.flatMap((source) => [source.title ?? "", source.description ?? "", source.textSnippet.slice(0, 1800)]),
+  ]
+    .join(" ")
+    .toLowerCase()
+
+  const scoredThemes = [
+    {
+      key: "politics",
+      score: keywordScore(haystack, ["election", "poll", "vote", "voter", "seat", "assembly", "parliament", "bjp", "congress", "candidate", "district", "hindi"]),
+    },
+    {
+      key: "business",
+      score: keywordScore(haystack, ["market", "stock", "economy", "business", "trade", "gdp", "startup", "revenue", "inflation", "bank"]),
+    },
+    {
+      key: "technology",
+      score: keywordScore(haystack, ["ai", "technology", "tech", "software", "chip", "startup", "app", "internet", "digital", "platform"]),
+    },
+    {
+      key: "health",
+      score: keywordScore(haystack, ["health", "hospital", "disease", "virus", "medical", "doctor", "patient", "nutrition", "vaccine"]),
+    },
+    {
+      key: "environment",
+      score: keywordScore(haystack, ["climate", "weather", "rain", "forest", "pollution", "river", "water", "heatwave", "environment"]),
+    },
+    {
+      key: "sports",
+      score: keywordScore(haystack, ["cricket", "match", "league", "tournament", "goal", "player", "sports", "team", "score"]),
+    },
+    {
+      key: "crisis",
+      score: keywordScore(haystack, ["war", "conflict", "attack", "earthquake", "flood", "disaster", "accident", "fire", "death"]),
+    },
+    {
+      key: "culture",
+      score: keywordScore(haystack, ["film", "festival", "culture", "music", "cinema", "fashion", "art", "heritage", "celebrity"]),
+    },
+  ] satisfies Array<{ key: ThemePaletteKey; score: number }>
+
+  scoredThemes.sort((left, right) => right.score - left.score)
+
+  const topTheme = scoredThemes[0]
+  return topTheme && topTheme.score > 0 ? THEME_PALETTES[topTheme.key] : THEME_PALETTES.general
+}
+
+function normalizePalette(
+  palette: Partial<InfographicSpec["palette"]> | undefined,
+  fallbackPalette: InfographicSpec["palette"] = DEFAULT_INFOGRAPHIC.palette
+) {
+  const background = isHexColor(palette?.background ?? "") ? palette!.background! : fallbackPalette.background
+  const surface = isHexColor(palette?.surface ?? "") ? palette!.surface! : fallbackPalette.surface
+  const accentCandidate = isHexColor(palette?.accent ?? "") ? palette!.accent! : fallbackPalette.accent
+  const textCandidate = isHexColor(palette?.text ?? "") ? palette!.text! : fallbackPalette.text
+  const mutedCandidate = isHexColor(palette?.muted ?? "") ? palette!.muted! : fallbackPalette.muted
+
+  const accent = contrastRatio("#ffffff", accentCandidate) >= 4.5 ? accentCandidate : fallbackPalette.accent
   const text =
     contrastRatio(textCandidate, surface) >= 4.5
       ? textCandidate
-      : bestReadableText(surface, [DEFAULT_INFOGRAPHIC.palette.text, "#111827", "#0f172a", "#ffffff"])
+      : bestReadableText(surface, [fallbackPalette.text, DEFAULT_INFOGRAPHIC.palette.text, "#111827", "#0f172a", "#ffffff"])
   const muted =
     contrastRatio(mutedCandidate, surface) >= 3
       ? mutedCandidate
-      : bestReadableText(surface, [DEFAULT_INFOGRAPHIC.palette.muted, text, "#374151", "#6b7280"])
+      : bestReadableText(surface, [fallbackPalette.muted, DEFAULT_INFOGRAPHIC.palette.muted, text, "#374151", "#6b7280"])
 
   return {
     background,
@@ -591,7 +716,10 @@ async function callChatJson<T>({
 
 function buildAssetSummary(assets: VisualAsset[]) {
   return assets
-    .map((asset) => `${asset.id} | ${asset.source} | ${asset.title}${asset.originUrl ? ` | ${asset.originUrl}` : ""}`)
+    .map((asset, index) => {
+      const priority = asset.source === "upload" ? "primary-reference" : index === 0 ? "article-hero" : "article-support"
+      return `${asset.id} | ${priority} | ${asset.source} | ${asset.title}${asset.originUrl ? ` | ${asset.originUrl}` : ""}`
+    })
     .join("\n")
 }
 
@@ -676,7 +804,11 @@ function normalizeQa(value: unknown): InfographicQa {
   }
 }
 
-function normalizeInfographic(value: Partial<InfographicSpec> | undefined, assetIds: string[]): InfographicSpec {
+function normalizeInfographic(
+  value: Partial<InfographicSpec> | undefined,
+  assetIds: string[],
+  fallbackPalette: InfographicSpec["palette"]
+): InfographicSpec {
   const stats = Array.isArray(value?.stats)
     ? value.stats
         .map((item) => {
@@ -711,6 +843,8 @@ function normalizeInfographic(value: Partial<InfographicSpec> | undefined, asset
     ? (value?.layoutVariant as InfographicSpec["layoutVariant"])
     : stats.length >= 6
       ? "data-lead"
+      : assetIds.length >= 2 && stats.length <= 4
+        ? "image-lead"
       : sections.length >= 5
         ? "timeline-focus"
         : assetIds.length >= 3
@@ -723,7 +857,7 @@ function normalizeInfographic(value: Partial<InfographicSpec> | undefined, asset
     takeaway: typeof value?.takeaway === "string" ? sanitizeText(value.takeaway, 220) : DEFAULT_INFOGRAPHIC.takeaway,
     footer: typeof value?.footer === "string" ? sanitizeText(value.footer, 120) : DEFAULT_INFOGRAPHIC.footer,
     layoutVariant,
-    palette: normalizePalette(value?.palette),
+    palette: normalizePalette(value?.palette, fallbackPalette),
     stats,
     sections,
     heroAssetIds,
@@ -760,6 +894,9 @@ async function callFactsModel({
           "Return concise but publishable infographic copy in Hindi or mixed Hindi-English matching the user request.",
           "Do not design a website. Plan an editorial vertical poster infographic.",
           "Prefer dense but readable modules, not sparse marketing copy.",
+          "When visuals are available, treat uploaded images as primary references and article images as secondary support.",
+          "Choose the layout and asset ids so the strongest available visuals are used prominently instead of being ignored.",
+          "Do not keep reusing the same generic warm-red palette unless the subject matter and visuals clearly justify it.",
           mode === "refinement"
             ? "Respect the prior direction from the conversation when revising the facts plan."
             : "Produce a strong first-pass facts plan with a decisive editorial hierarchy.",
@@ -780,6 +917,8 @@ async function callFactsModel({
               assets.length > 0 ? `Available visual assets:\n${assetSummary}` : "No visual assets were available.",
               "Return facts, a structured infographic spec, and recommended asset ids.",
               "Title should be strong and editorial. Subtitle should add context. Stats and sections may be denser than a simple social card if the story demands it.",
+              "Set the palette from the story mood and the visible cues in the provided images when possible.",
+              "If good photos are available and the story is not overwhelmingly data-heavy, prefer an image-led composition.",
               "Avoid fluff, repetition, weak hedging, and generic poster language.",
             ].join("\n\n"),
           },
@@ -827,6 +966,9 @@ async function callArtDirectionModel({
           "Push for layered composition, dense but legible hierarchy, textured backgrounds, infographic modules, badges, callouts, maps, icons, silhouettes, and editorial polish when relevant.",
           "Preserve factual text from the infographic plan. Avoid inventing numbers or districts.",
           "Reference samples are only style guidance; never copy their content or logos.",
+          "Uploaded images are the primary visual anchors. Article images are supporting references.",
+          "Derive the palette from the subject matter and the actual hues, lighting, and emotional tone visible in the supplied images when they are available.",
+          "Avoid defaulting every story to the same red-beige editorial look.",
         ].join(" "),
       },
       {
@@ -848,6 +990,7 @@ async function callArtDirectionModel({
               assets.length > 0 ? `Available visuals:\n${assetSummary}` : "No visuals were available.",
               `Style-only template references:\n${templateSummary}`,
               "Write the image prompt so the model renders a complete, publication-ready infographic poster with readable Hindi-first typography, strong headline treatment, and distinct information zones.",
+              "If source or uploaded photos are available, explicitly place them as hero/supporting imagery rather than replacing them with generic stock-style substitutes.",
               "Explicitly avoid a browser screenshot, SaaS dashboard, wireframe, or web card grid aesthetic.",
             ].join("\n\n"),
           },
@@ -873,16 +1016,21 @@ function buildFinalImagePrompt({
   infographic,
   facts,
   artDirection,
+  assets,
 }: {
   infographic: InfographicSpec
   facts: InfographicFact[]
   artDirection: InfographicArtDirection
+  assets: VisualAsset[]
 }) {
   const factLines = facts.slice(0, 10).map((fact) => `${fact.label}: ${fact.value} - ${fact.detail}`).join("\n")
   const requiredText = Array.from(
     new Set([infographic.title, infographic.subtitle, infographic.takeaway, ...artDirection.mustIncludeText].filter(Boolean))
   )
     .slice(0, 8)
+    .join("\n")
+  const referenceAssets = pickReferenceAssets(infographic, assets)
+    .map((asset) => `- ${asset.id}: ${asset.title} (${asset.source === "upload" ? "uploaded primary reference" : "article reference"})`)
     .join("\n")
 
   return [
@@ -892,6 +1040,9 @@ function buildFinalImagePrompt({
     `Typography: ${artDirection.typography}`,
     `Color direction: ${artDirection.colorDirection}`,
     `Canvas: single vertical infographic poster, 1024x1536, full-bleed, print-ready visual polish.`,
+    referenceAssets
+      ? `Reference imagery to integrate directly into the composition as real visual anchors, preserving subject identity, scene cues, and color relationships instead of inventing substitutes:\n${referenceAssets}`
+      : "",
     `Required headline and text elements to appear cleanly and prominently:\n${requiredText}`,
     factLines ? `Facts to visually encode through boxes, labels, maps, callouts, seals, arrows, charts, or modular sections:\n${factLines}` : "",
     `Negative constraints: ${artDirection.negativePrompt}`,
@@ -901,24 +1052,126 @@ function buildFinalImagePrompt({
     .join("\n\n")
 }
 
+function dataUrlToFile(dataUrl: string, fileName: string) {
+  const match = dataUrl.match(/^data:([^;,]+);base64,(.+)$/)
+  if (!match) {
+    return null
+  }
+
+  const mediaType = normalizeMediaType(match[1] ?? "") || "image/png"
+  const extension = mediaType.split("/")[1] ?? "png"
+  const buffer = Buffer.from(match[2] ?? "", "base64")
+  return new File([buffer], `${fileName}.${extension}`, { type: mediaType })
+}
+
+function pickReferenceAssets(infographic: InfographicSpec, assets: VisualAsset[]) {
+  const assetMap = new Map(assets.map((asset) => [asset.id, asset]))
+  const orderedIds = [
+    ...infographic.heroAssetIds,
+    ...infographic.stripAssetIds,
+    ...assets.filter((asset) => asset.source === "upload").map((asset) => asset.id),
+    ...assets.map((asset) => asset.id),
+  ]
+
+  return Array.from(new Set(orderedIds))
+    .map((id) => assetMap.get(id))
+    .filter((asset): asset is VisualAsset => Boolean(asset))
+    .slice(0, 4)
+}
+
+async function requestRenderedImage({
+  url,
+  body,
+  isMultipart = false,
+}: {
+  url: string
+  body: BodyInit
+  isMultipart?: boolean
+}) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${getApiKey()}`,
+      ...(isMultipart ? {} : { "Content-Type": "application/json" }),
+    },
+    body,
+  })
+
+  const payload = (await response.json()) as {
+    error?: { message?: string }
+    data?: Array<{
+      b64_json?: string
+      revised_prompt?: string
+    }>
+  }
+
+  if (!response.ok) {
+    throw new Error(payload.error?.message ?? "Image generation failed")
+  }
+
+  const image = payload.data?.[0]
+  if (!image?.b64_json) {
+    throw new Error("Image generation returned no image data.")
+  }
+
+  return {
+    dataUrl: `data:image/png;base64,${image.b64_json}`,
+    revisedPrompt: image.revised_prompt ? sanitizeText(image.revised_prompt, 4000) : null,
+  }
+}
+
 async function generateFinalImage({
   infographic,
   facts,
   artDirection,
+  assets,
 }: {
   infographic: InfographicSpec
   facts: InfographicFact[]
   artDirection: InfographicArtDirection
+  assets: VisualAsset[]
 }): Promise<GeneratedInfographicImage> {
-  const prompt = buildFinalImagePrompt({ infographic, facts, artDirection })
+  const prompt = buildFinalImagePrompt({ infographic, facts, artDirection, assets })
+  const referenceAssets = pickReferenceAssets(infographic, assets)
+  const errors: string[] = []
 
   try {
-    const response = await fetch(IMAGE_API_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${getApiKey()}`,
-        "Content-Type": "application/json",
-      },
+    if (referenceAssets.length > 0) {
+      const formData = new FormData()
+      formData.append("model", IMAGE_MODEL_ID)
+      formData.append("prompt", prompt)
+      formData.append("size", "1024x1536")
+
+      for (const [index, asset] of referenceAssets.entries()) {
+        const file = dataUrlToFile(asset.dataUrl, `reference-${index + 1}`)
+        if (file) {
+          formData.append("image[]", file)
+        }
+      }
+
+      try {
+        const editedImage = await requestRenderedImage({
+          url: IMAGE_EDIT_API_URL,
+          body: formData,
+          isMultipart: true,
+        })
+
+        return {
+          status: "generated",
+          model: IMAGE_MODEL_ID,
+          dataUrl: editedImage.dataUrl,
+          mimeType: "image/png",
+          prompt,
+          revisedPrompt: editedImage.revisedPrompt,
+          error: null,
+        }
+      } catch (error) {
+        errors.push(error instanceof Error ? `image edit failed: ${error.message}` : "image edit failed")
+      }
+    }
+
+    const generatedImage = await requestRenderedImage({
+      url: IMAGE_API_URL,
       body: JSON.stringify({
         model: IMAGE_MODEL_ID,
         prompt,
@@ -926,30 +1179,13 @@ async function generateFinalImage({
       }),
     })
 
-    const payload = (await response.json()) as {
-      error?: { message?: string }
-      data?: Array<{
-        b64_json?: string
-        revised_prompt?: string
-      }>
-    }
-
-    if (!response.ok) {
-      throw new Error(payload.error?.message ?? "Image generation failed")
-    }
-
-    const image = payload.data?.[0]
-    if (!image?.b64_json) {
-      throw new Error("Image generation returned no image data.")
-    }
-
     return {
       status: "generated",
       model: IMAGE_MODEL_ID,
-      dataUrl: `data:image/png;base64,${image.b64_json}`,
+      dataUrl: generatedImage.dataUrl,
       mimeType: "image/png",
       prompt,
-      revisedPrompt: image.revised_prompt ? sanitizeText(image.revised_prompt, 4000) : null,
+      revisedPrompt: generatedImage.revisedPrompt,
       error: null,
     }
   } catch (error) {
@@ -960,7 +1196,10 @@ async function generateFinalImage({
       mimeType: null,
       prompt,
       revisedPrompt: null,
-      error: error instanceof Error ? error.message : "Image generation failed.",
+      error:
+        error instanceof Error
+          ? [...errors, error.message].join(" | ") || "Image generation failed."
+          : errors.join(" | ") || "Image generation failed.",
     }
   }
 }
@@ -1062,16 +1301,19 @@ export async function POST(request: Request) {
 
     const pageImages = pages.flatMap((page) => page.imageUrls.map((url) => ({ page, url })))
     const downloadedImages = await Promise.all(
-      pageImages.slice(0, MAX_SOURCE_IMAGES).map(async ({ url }, index) => {
+      pageImages.slice(0, MAX_SOURCE_IMAGES).map(async ({ page, url }, index) => {
         const dataUrl = await remoteImageToDataUrl(url)
         if (!dataUrl) {
           return null
         }
 
+        const pageTitle = page.source.title ? sanitizeText(page.source.title, 56) : null
+        const host = new URL(url).hostname.replace(/^www\./, "")
+
         return {
           id: `link-${index + 1}`,
           source: "link" as const,
-          title: `Source image ${index + 1}`,
+          title: sanitizeText(pageTitle ? `${pageTitle} image ${index + 1}` : `${host} image ${index + 1}`, 80),
           mediaType: getDataUrlMediaType(dataUrl) || "image/jpeg",
           dataUrl,
           originUrl: url,
@@ -1083,6 +1325,7 @@ export async function POST(request: Request) {
     const assets: VisualAsset[] = [...uploadedAssets, ...linkAssets]
     const sourceSummaries = pages.map((page) => page.source)
     const history = (body.history ?? []).filter((message) => message.role === "user" || message.role === "assistant")
+    const fallbackPalette = selectThemePalette({ prompt, sources: sourceSummaries })
 
     const factsResult = await callFactsModel({
       mode,
@@ -1095,7 +1338,7 @@ export async function POST(request: Request) {
     const assetIds = assets.map((asset) => asset.id)
     const uploadedAssetIds = uploadedAssets.map((asset) => asset.id)
     const recommendedAssets = normalizeStringList(factsResult.recommendedAssets, 6).filter((id) => assetIds.includes(id))
-    const infographic = normalizeInfographic(factsResult.infographic, assetIds)
+    const infographic = normalizeInfographic(factsResult.infographic, assetIds, fallbackPalette)
 
     infographic.heroAssetIds = preferAssetIds({
       current: infographic.heroAssetIds,
@@ -1124,7 +1367,7 @@ export async function POST(request: Request) {
       }),
       infographic
     )
-    const finalImage = await generateFinalImage({ infographic, facts, artDirection })
+    const finalImage = await generateFinalImage({ infographic, facts, artDirection, assets })
 
     if (finalImage.status !== "generated" || !finalImage.dataUrl) {
       return NextResponse.json(
