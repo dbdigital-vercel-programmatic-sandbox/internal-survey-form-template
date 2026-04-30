@@ -26,7 +26,7 @@ const MAX_MEDIA_FOR_MODEL = 6
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024
 const SUPPORTED_MODEL_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"])
 const INFOGRAPHIC_PRE_PROMPT = [
-  "Treat every output as a fixed-layout editorial infographic, not a freeform poster.",
+  "Treat every output as a fixed-layout visual design infographic (poster style), not a freeform poster.",
   "All copy must be layout-safe. No title, subtitle, stat, section heading, bullet, takeaway, or footer may overflow, clip, collide, or depend on tiny text to fit.",
   "Prefer shorter copy over fuller copy. If a fact does not fit cleanly, omit or compress it.",
   "Never use ellipses, clipped phrases, placeholder copy, or visibly truncated labels as a way to force text into the layout.",
@@ -42,16 +42,16 @@ const INFOGRAPHIC_PRE_PROMPT = [
   "Before finalizing, self-check for clipped text, weak contrast, empty panels, awkward cropping, repeated points, and loose spacing."
 ].join(" ")
 const INFOGRAPHIC_WORKFLOW = [
-  "Follow this workflow exactly before you return the infographic JSON.",
-  "1. Read the user prompt and every available source carefully, then identify only the really important points that must appear in the infographic.",
+  "Follow this workflow exactly before you return the visual design infographic (poster style) JSON.",
+  "1. Read the user prompt and every available source carefully, then identify only the really important points that must appear in the visual design infographic (poster style).",
   "2. Review all available visuals and identify the strongest images that are truly worth featuring. Prefer uploaded images first, then scraped images only when they add real context.",
   "3. Based on the final amount of content and the available media, choose the most suitable editorial theme, layout rhythm, and visual hierarchy.",
   "4. If no template is a strong fit, invent a cleaner custom theme instead of forcing a weak one.",
   "5. Never solve space problems by shrinking text too far or by using ellipses. Rewrite copy shorter or remove lower-priority content instead.",
-  "6. If the draft feels overcrowded, aggressively cut semi-important points until the infographic feels sharp and intentional.",
+  "6. If the draft feels overcrowded, aggressively cut semi-important points until the visual design infographic (poster style) feels sharp and intentional.",
   "7. If the draft feels too empty, revisit the sources and add one or two more meaningful facts or modules, but only when they improve the composition.",
-  "8. Before finalizing, review the full infographic mentally and remove anything that feels off-topic, repetitive, awkwardly phrased, weakly supported, or visually out of balance.",
-  "9. The final output should feel polished, editorial, and story-specific, not like a generic CMS template."
+  "8. Before finalizing, review the full visual design infographic (poster style) mentally and remove anything that feels off-topic, repetitive, awkwardly phrased, weakly supported, or visually out of balance.",
+  "9. The final output should feel like a polished, editorial, story-specific visual design infographic (poster style), not a generic CMS template."
 ].join(" ")
 const INFOGRAPHIC_RESPONSE_SCHEMA = {
   name: "infographic_response",
@@ -581,9 +581,9 @@ async function callOpenAI({
     {
       role: "system",
       content: [
-        "You are an infographic-focused newsroom assistant. Your job is to turn a user's link, uploaded images, and instructions into a sharp infographic brief.",
+        "You are a newsroom assistant focused on creating a visual design infographic (poster style). Your job is to turn a user's link, uploaded images, and instructions into a sharp visual design infographic (poster style) brief.",
         "Always prefer uploaded images over scraped link images when selecting visuals. Only use scraped images when they add clear context or when user uploads are insufficient.",
-        "Return valid JSON only with keys assistantMessage, infographic, and recommendedAssets. The infographic object must contain title, subtitle, takeaway, footer, layoutVariant, palette, stats, sections, heroAssetIds, and stripAssetIds. Palette values must be 6-digit hex colors.",
+        "Return valid JSON only with keys assistantMessage, infographic, and recommendedAssets. The infographic object must contain title, subtitle, takeaway, footer, layoutVariant, palette, stats, sections, heroAssetIds, and stripAssetIds. Palette values must be 6-digit hex colors. This object represents a visual design infographic (poster style).",
         "Choose layoutVariant deliberately from split-hero, image-lead, or data-lead based on the story's content density and visual strength.",
         "Keep sections concise and factual. Treat any reference templates as style inspiration only. Never copy or paraphrase their text, facts, subject matter, logos, maps, charts, or embedded images.",
         INFOGRAPHIC_WORKFLOW,
@@ -600,17 +600,17 @@ async function callOpenAI({
         {
           type: "text",
           text: [
-            "Create a publishable infographic plan and response for the latest user request.",
+            "Create a publishable visual design infographic (poster style) plan and response for the latest user request.",
             `User request: ${sanitizeText(prompt, 2400)}`,
             sources.length > 0 ? `Scraped source context:\n${sourceSummary}` : "No source links were available.",
             assets.length > 0 ? `Available visual assets:\n${assetSummary}` : "No visual assets were available.",
             `Style-only template references:\n${templateSummary}`,
             `Required workflow: ${INFOGRAPHIC_WORKFLOW}`,
             `Permanent layout safety rules: ${INFOGRAPHIC_PRE_PROMPT}`,
-            "Choose exactly one layoutVariant for the final infographic: split-hero for balanced explainers, image-lead when visuals should dominate, or data-lead when stats and modular facts carry the story.",
+            "Choose exactly one layoutVariant for the final visual design infographic (poster style): split-hero for balanced explainers, image-lead when visuals should dominate, or data-lead when stats and modular facts carry the story.",
             "Prefer uploaded visuals first. If you recommend assets, list their ids with uploaded assets first whenever possible.",
             "Generate layout-safe copy: short title, compact subtitle, brief takeaway, concise stat labels, and short section bullets so the infographic remains presentable with no overlaps.",
-            "Aim for editorial infographic quality with disciplined spacing, strong hierarchy, clear sectioning, and visually distinct information modules.",
+            "Aim for premium visual design infographic (poster style) quality with disciplined spacing, strong hierarchy, clear sectioning, and visually distinct information modules.",
             templateImages.length > 0
               ? "The final images in this request are template references only. Use them only for style, density, spacing, and hierarchy. Never use their subject matter, text, numbers, logos, maps, charts, or embedded images as output content."
               : "",
@@ -763,7 +763,7 @@ export async function POST(request: Request) {
       assistantMessage:
         typeof openAIResult.assistantMessage === "string"
           ? sanitizeText(openAIResult.assistantMessage, 1200)
-          : "Generated an infographic draft from the link context and selected visuals.",
+          : "Generated a visual design infographic (poster style) draft from the link context and selected visuals.",
       infographic: normalizedInfographic,
       extractedSources: sourceSummaries,
       assets,

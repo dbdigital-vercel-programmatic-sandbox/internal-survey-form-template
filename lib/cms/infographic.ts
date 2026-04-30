@@ -73,9 +73,9 @@ export type InfographicResponse = {
 
 export const DEFAULT_INFOGRAPHIC: InfographicSpec = {
   title: "Infographic Draft",
-  subtitle: "Add a source link and a few images to generate a sharper visual summary.",
+  subtitle: "Add a source link and a few images to generate a sharper visual design infographic (poster style).",
   takeaway: "User-provided images are given highest priority during layout selection.",
-  footer: "Editorial infographic draft",
+  footer: "Editorial visual design poster draft",
   layoutVariant: "split-hero",
   palette: {
     background: "#f4efe7",

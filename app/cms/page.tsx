@@ -704,7 +704,7 @@ export default function CmsPage() {
 
   async function submitPrompt(rawPrompt: string, mode: "setup" | "refinement") {
     if (!rawPrompt.trim()) {
-      setError(mode === "refinement" ? "Add a refinement request before updating the draft." : "Add a prompt before generating an infographic.")
+      setError(mode === "refinement" ? "Add a refinement request before updating the draft." : "Add a prompt before generating a visual design infographic (poster style).")
       return
     }
 
@@ -737,7 +737,7 @@ export default function CmsPage() {
       }
       setEditingSourcePack(false)
     } catch (submitError) {
-      setError(submitError instanceof Error ? submitError.message : "Unable to generate infographic.")
+      setError(submitError instanceof Error ? submitError.message : "Unable to generate a visual design infographic (poster style).")
     } finally {
       setSubmitting(false)
     }
@@ -880,7 +880,7 @@ export default function CmsPage() {
                     <div>
                       <p className="text-sm font-semibold text-foreground">Create first draft</p>
                       <p className="text-sm text-muted-foreground">
-                        Step 2: describe the angle, tone, hierarchy, and must-have facts for the initial infographic.
+                        Step 2: describe the angle, tone, hierarchy, and must-have facts for the initial visual design infographic (poster style).
                       </p>
                     </div>
 
@@ -888,7 +888,7 @@ export default function CmsPage() {
                       <Textarea
                         value={setupPrompt}
                         onChange={(event) => setSetupPrompt(event.target.value)}
-                        placeholder="Example: Build a Hindi-first election explainer with a bold headline, 3 stat boxes, and strong visual emphasis on my uploaded images."
+                        placeholder="Example: Build a Hindi-first visual design infographic (poster style) with a bold headline, 3 stat boxes, and strong visual emphasis on my uploaded images."
                         className="min-h-36 resize-y bg-zinc-50 dark:bg-zinc-900"
                       />
                     </div>
@@ -903,7 +903,7 @@ export default function CmsPage() {
                   <div className="flex flex-wrap items-center gap-3">
                     <Button type="submit" disabled={submitting} className="bg-[#9d1c1f] text-white hover:bg-[#82171a]">
                       {submitting ? <LoaderIcon className="animate-spin" /> : <SendHorizonalIcon />}
-                      Generate infographic
+                      Generate visual design infographic
                     </Button>
                     <p className="text-sm text-muted-foreground">
                       Uploaded images are sent first, then scraped link images are added as secondary context.
@@ -917,7 +917,7 @@ export default function CmsPage() {
                     <div>
                       <p className="text-sm font-semibold text-foreground">Follow-up updates happen in the refinement chat</p>
                       <p className="text-sm text-muted-foreground">
-                        Use the separate chat window on the right to improve the current infographic. It automatically reuses the locked source pack and the prior conversation.
+                        Use the separate chat window on the right to improve the current visual design infographic (poster style). It automatically reuses the locked source pack and the prior conversation.
                       </p>
                     </div>
                   </div>
@@ -1050,7 +1050,7 @@ export default function CmsPage() {
                     <div className="flex flex-wrap items-center gap-3">
                       <Button type="submit" disabled={submitting} className="bg-[#9d1c1f] text-white hover:bg-[#82171a]">
                         {submitting ? <LoaderIcon className="animate-spin" /> : <SendHorizonalIcon />}
-                        Update infographic
+                        Update visual design infographic
                       </Button>
                       <p className="text-sm text-muted-foreground">
                         Follow-up requests reattach the current source URL and uploaded images automatically.
@@ -1083,7 +1083,7 @@ export default function CmsPage() {
                   </div>
                 ) : (
                   <p className="text-sm leading-6 text-muted-foreground">
-                    When you include a story link, the server fetches the page, extracts readable text, collects media links, and attempts to read those images before GPT-4.1 mini builds the infographic brief.
+                    When you include a story link, the server fetches the page, extracts readable text, collects media links, and attempts to read those images before GPT-4.1 mini builds the visual design infographic (poster style) brief.
                   </p>
                 )}
 
