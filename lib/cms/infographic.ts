@@ -49,7 +49,45 @@ export type InfographicSection = {
   body: string[]
 }
 
-export type InfographicLayoutVariant = "split-hero" | "image-lead" | "data-lead"
+export type InfographicLayoutVariant =
+  | "split-hero"
+  | "image-lead"
+  | "data-lead"
+  | "editorial-mosaic"
+  | "timeline-focus"
+
+export type InfographicFact = {
+  label: string
+  value: string
+  detail: string
+}
+
+export type InfographicArtDirection = {
+  visualStyle: string
+  composition: string
+  typography: string
+  colorDirection: string
+  imagePrompt: string
+  negativePrompt: string
+  mustIncludeText: string[]
+  avoid: string[]
+}
+
+export type InfographicQa = {
+  approved: boolean
+  summary: string
+  issues: string[]
+}
+
+export type GeneratedInfographicImage = {
+  status: "generated" | "fallback"
+  model: string
+  dataUrl: string | null
+  mimeType: string | null
+  prompt: string
+  revisedPrompt: string | null
+  error: string | null
+}
 
 export type InfographicSpec = {
   title: string
@@ -67,6 +105,11 @@ export type InfographicSpec = {
 export type InfographicResponse = {
   assistantMessage: string
   infographic: InfographicSpec
+  facts: InfographicFact[]
+  artDirection: InfographicArtDirection
+  qa: InfographicQa
+  finalImage: GeneratedInfographicImage
+  renderMode: "model-image" | "svg-fallback"
   extractedSources: ExtractedSource[]
   assets: VisualAsset[]
 }
@@ -76,7 +119,7 @@ export const DEFAULT_INFOGRAPHIC: InfographicSpec = {
   subtitle: "Add a source link and a few images to generate a sharper visual design infographic (poster style).",
   takeaway: "User-provided images are given highest priority during layout selection.",
   footer: "Editorial visual design poster draft",
-  layoutVariant: "split-hero",
+  layoutVariant: "editorial-mosaic",
   palette: {
     background: "#f4efe7",
     surface: "#fffaf2",

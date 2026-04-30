@@ -35,12 +35,16 @@ import {
 const MAX_ATTACHMENTS = 4
 const CANVAS_WIDTH = 1080
 const CANVAS_HEIGHT = 1600
+const DISPLAY_FONT_STACK = "'Noto Sans Devanagari', 'Hind', 'Mukta', 'Nirmala UI', Inter, Arial, sans-serif"
+const BODY_FONT_STACK = "'Noto Sans Devanagari', 'Hind', 'Mukta', 'Nirmala UI', Inter, Arial, sans-serif"
 const QUICK_REFINEMENTS = [
   "Tighten the headline and make the explainer more election-focused.",
   "Use the uploaded images more prominently and reduce generic source visuals.",
   "Add stronger stat callouts and shorten the body copy for social sharing.",
   "Shift the palette and hierarchy closer to a Hindi news explainer graphic.",
 ]
+
+let textMeasureContext: CanvasRenderingContext2D | null = null
 
 function escapeXml(value: string) {
   return value
@@ -51,15 +55,34 @@ function escapeXml(value: string) {
     .replace(/'/g, "&apos;")
 }
 
-function wrapText(text: string, width: number, fontSize: number) {
-  const maxChars = Math.max(10, Math.floor(width / Math.max(fontSize * 0.56, 1)))
+function getTextMeasureContext() {
+  if (textMeasureContext || typeof document === "undefined") {
+    return textMeasureContext
+  }
+
+  const canvas = document.createElement("canvas")
+  textMeasureContext = canvas.getContext("2d")
+  return textMeasureContext
+}
+
+function measureTextWidth(text: string, fontSize: number, weight: number, fontFamily = BODY_FONT_STACK) {
+  const context = getTextMeasureContext()
+  if (!context) {
+    return text.length * fontSize * 0.58
+  }
+
+  context.font = `${weight} ${fontSize}px ${fontFamily}`
+  return context.measureText(text).width
+}
+
+function wrapText(text: string, width: number, fontSize: number, weight = 600, fontFamily = BODY_FONT_STACK) {
   const words = text.trim().split(/\s+/)
   const lines: string[] = []
   let current = ""
 
   for (const word of words) {
     const next = current ? `${current} ${word}` : word
-    if (next.length <= maxChars) {
+    if (measureTextWidth(next, fontSize, weight, fontFamily) <= width) {
       current = next
       continue
     }
@@ -93,6 +116,7 @@ function renderTextLines({
   lineHeight,
   color,
   weight,
+  fontFamily = BODY_FONT_STACK,
 }: {
   lines: string[]
   x: number
@@ -101,13 +125,55 @@ function renderTextLines({
   lineHeight: number
   color: string
   weight: number
+  fontFamily?: string
 }) {
   return lines
     .map(
       (line, index) =>
-        `<text x="${x}" y="${y + index * lineHeight}" fill="${color}" font-size="${fontSize}" font-weight="${weight}" font-family="Inter, Arial, sans-serif">${escapeXml(line)}</text>`
+        `<text x="${x}" y="${y + index * lineHeight}" fill="${color}" font-size="${fontSize}" font-weight="${weight}" font-family="${fontFamily}">${escapeXml(line)}</text>`
     )
     .join("")
+}
+
+function renderBackdrop(spec: InfographicSpec) {
+  return `
+    <defs>
+      <linearGradient id="paperGlow" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0%" stop-color="${spec.palette.background}" />
+        <stop offset="100%" stop-color="#f9f2e7" />
+      </linearGradient>
+      <radialGradient id="accentHalo" cx="50%" cy="18%" r="70%">
+        <stop offset="0%" stop-color="${spec.palette.accent}" stop-opacity="0.16" />
+        <stop offset="100%" stop-color="${spec.palette.accent}" stop-opacity="0" />
+      </radialGradient>
+      <filter id="panelShadow" x="-20%" y="-20%" width="140%" height="160%">
+        <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#000000" flood-opacity="0.12" />
+      </filter>
+      <pattern id="dotField" x="0" y="0" width="22" height="22" patternUnits="userSpaceOnUse">
+        <circle cx="2" cy="2" r="1.4" fill="${spec.palette.accent}" fill-opacity="0.08" />
+      </pattern>
+    </defs>
+    <rect width="1080" height="1600" fill="url(#paperGlow)" />
+    <rect width="1080" height="1600" fill="url(#accentHalo)" />
+    <rect x="38" y="38" width="1004" height="1524" rx="40" fill="url(#dotField)" opacity="0.55" />
+  `.trim()
+}
+
+function renderKicker(text: string, palette: InfographicSpec["palette"]) {
+  const lines = clampLines(wrapText(text, 260, 24, 800, DISPLAY_FONT_STACK), 2)
+  return [
+    `<rect x="54" y="42" width="308" height="60" rx="20" fill="${palette.accent}" filter="url(#panelShadow)" />`,
+    renderTextLines({
+      lines,
+      x: 86,
+      y: 80,
+      fontSize: 24,
+      lineHeight: 26,
+      color: "#ffffff",
+      weight: 800,
+      fontFamily: DISPLAY_FONT_STACK,
+    }),
+  ].join("")
 }
 
 function renderImageFrame(
@@ -129,13 +195,14 @@ function renderImageFrame(
   }
 ) {
   if (!asset) {
-    return `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${radius}" fill="#ffffff" />`
+    return `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${radius}" fill="#ffffff" filter="url(#panelShadow)" />`
   }
 
   return [
     `<clipPath id="${clipId}"><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${radius}" /></clipPath>`,
-    `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${radius}" fill="#ffffff" />`,
+    `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${radius}" fill="#ffffff" filter="url(#panelShadow)" />`,
     `<image href="${asset.dataUrl}" x="${x}" y="${y}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clipId})" />`,
+    `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${radius}" fill="none" stroke="#ffffff" stroke-opacity="0.95" stroke-width="4" />`,
   ].join("")
 }
 
@@ -175,13 +242,14 @@ function renderStatGrid({
         const row = Math.floor(index / safeColumns)
         const cardX = x + column * (cardWidth + gapX)
         const cardY = y + row * (cardHeight + gapY)
-        const valueLines = clampLines(wrapText(stat.value, cardWidth - 48, 34), 2)
-        const labelLines = clampLines(wrapText(stat.label, cardWidth - 48, 18), 2)
+          const valueLines = clampLines(wrapText(stat.value, cardWidth - 48, 34, 900, DISPLAY_FONT_STACK), 2)
+          const labelLines = clampLines(wrapText(stat.label, cardWidth - 48, 18, 700, BODY_FONT_STACK), 2)
         const valueStartY = cardY + 56
         const labelStartY = valueStartY + valueLines.length * 40 + 14
 
         return [
-          `<rect x="${cardX}" y="${cardY}" width="${cardWidth}" height="${cardHeight}" rx="22" fill="#ffffff" stroke="${palette.accent}" stroke-opacity="0.12" />`,
+          `<rect x="${cardX}" y="${cardY}" width="${cardWidth}" height="${cardHeight}" rx="22" fill="#ffffff" stroke="${palette.accent}" stroke-opacity="0.12" filter="url(#panelShadow)" />`,
+          `<rect x="${cardX}" y="${cardY}" width="${cardWidth}" height="12" rx="22" fill="${palette.accent}" />`,
           renderTextLines({
             lines: valueLines,
             x: cardX + 24,
@@ -190,6 +258,7 @@ function renderStatGrid({
             lineHeight: 40,
             color: palette.accent,
             weight: 900,
+            fontFamily: DISPLAY_FONT_STACK,
           }),
           renderTextLines({
             lines: labelLines,
@@ -199,6 +268,7 @@ function renderStatGrid({
             lineHeight: 22,
             color: palette.muted,
             weight: 700,
+            fontFamily: BODY_FONT_STACK,
           }),
         ].join("")
       })
@@ -233,12 +303,12 @@ function renderStackSections({
     markup: sections
       .map((section, index) => {
         const cardY = y + index * (cardHeight + gap)
-        const headingLines = clampLines(wrapText(section.heading, accentWidth - 52, 26), 2)
-        const bulletLines = section.body.slice(0, 2).map((item) => clampLines(wrapText(`• ${item}`, width - accentWidth - 74, 20), 1))
+        const headingLines = clampLines(wrapText(section.heading, accentWidth - 52, 26, 800, DISPLAY_FONT_STACK), 2)
+        const bulletLines = section.body.map((item) => clampLines(wrapText(`• ${item}`, width - accentWidth - 74, 20, 500, BODY_FONT_STACK), 2))
         let cursorY = cardY + 34 + headingLines.length * 28
 
         const textParts = [
-          `<rect x="${x}" y="${cardY}" width="${width}" height="${cardHeight}" rx="24" fill="#ffffff" stroke="${palette.accent}" stroke-opacity="0.1" />`,
+          `<rect x="${x}" y="${cardY}" width="${width}" height="${cardHeight}" rx="24" fill="#ffffff" stroke="${palette.accent}" stroke-opacity="0.1" filter="url(#panelShadow)" />`,
           `<rect x="${x}" y="${cardY}" width="${accentWidth}" height="${cardHeight}" rx="24" fill="${palette.accent}" />`,
           renderTextLines({
             lines: headingLines,
@@ -248,6 +318,7 @@ function renderStackSections({
             lineHeight: 31,
             color: "#ffffff",
             weight: 800,
+            fontFamily: DISPLAY_FONT_STACK,
           }),
         ]
 
@@ -262,6 +333,7 @@ function renderStackSections({
               lineHeight: 24,
               color: palette.text,
               weight: 500,
+              fontFamily: BODY_FONT_STACK,
             })
           )
           cursorY += lines.length * 24
@@ -310,11 +382,11 @@ function renderColumnSections({
         const row = Math.floor(index / safeColumns)
         const cardX = x + column * (cardWidth + gapX)
         const cardY = y + row * (cardHeight + gapY)
-        const headingLines = clampLines(wrapText(section.heading, cardWidth - 44, 24), 2)
-        const bulletLines = section.body.slice(0, 2).flatMap((item) => clampLines(wrapText(`• ${item}`, cardWidth - 50, 19), 2))
+        const headingLines = clampLines(wrapText(section.heading, cardWidth - 44, 24, 800, DISPLAY_FONT_STACK), 2)
+        const bulletLines = section.body.flatMap((item) => clampLines(wrapText(`• ${item}`, cardWidth - 50, 19, 600, BODY_FONT_STACK), 2))
 
         return [
-          `<rect x="${cardX}" y="${cardY}" width="${cardWidth}" height="${cardHeight}" rx="24" fill="#ffffff" stroke="${palette.accent}" stroke-opacity="0.1" />`,
+          `<rect x="${cardX}" y="${cardY}" width="${cardWidth}" height="${cardHeight}" rx="24" fill="#ffffff" stroke="${palette.accent}" stroke-opacity="0.1" filter="url(#panelShadow)" />`,
           `<rect x="${cardX}" y="${cardY}" width="${cardWidth}" height="10" rx="24" fill="${palette.accent}" />`,
           renderTextLines({
             lines: headingLines,
@@ -324,6 +396,7 @@ function renderColumnSections({
             lineHeight: 28,
             color: palette.text,
             weight: 800,
+            fontFamily: DISPLAY_FONT_STACK,
           }),
           renderTextLines({
             lines: bulletLines,
@@ -333,6 +406,7 @@ function renderColumnSections({
             lineHeight: 24,
             color: palette.muted,
             weight: 600,
+            fontFamily: BODY_FONT_STACK,
           }),
         ].join("")
       })
@@ -343,30 +417,41 @@ function renderColumnSections({
 
 function renderTakeawayBand(spec: InfographicSpec, y: number, height: number) {
   return [
-    `<rect x="54" y="${y}" width="972" height="${height}" rx="28" fill="${spec.palette.accent}" />`,
+    `<rect x="54" y="${y}" width="972" height="${height}" rx="28" fill="${spec.palette.accent}" filter="url(#panelShadow)" />`,
     renderTextLines({
-      lines: clampLines(wrapText(spec.takeaway, 914, 30), 2),
+      lines: clampLines(wrapText(spec.takeaway, 914, 30, 800, DISPLAY_FONT_STACK), 2),
       x: 88,
       y: y + 64,
       fontSize: 30,
       lineHeight: 36,
       color: "#ffffff",
       weight: 800,
+      fontFamily: DISPLAY_FONT_STACK,
     }),
   ].join("")
 }
 
 function resolveLayoutVariant(spec: InfographicSpec, assetCount: number): InfographicLayoutVariant {
-  if (spec.layoutVariant === "split-hero" || spec.layoutVariant === "image-lead" || spec.layoutVariant === "data-lead") {
+  if (
+    spec.layoutVariant === "split-hero" ||
+    spec.layoutVariant === "image-lead" ||
+    spec.layoutVariant === "data-lead" ||
+    spec.layoutVariant === "editorial-mosaic" ||
+    spec.layoutVariant === "timeline-focus"
+  ) {
     return spec.layoutVariant
   }
 
-  if (assetCount >= 2 && spec.stats.length <= 2) {
-    return "image-lead"
+  if (spec.sections.length >= 5) {
+    return "timeline-focus"
   }
 
-  if (spec.stats.length >= 3) {
+  if (spec.stats.length >= 6) {
     return "data-lead"
+  }
+
+  if (assetCount >= 3) {
+    return "editorial-mosaic"
   }
 
   return "split-hero"
@@ -380,20 +465,101 @@ function buildInfographicSvg(spec: InfographicSpec, assets: VisualAsset[]) {
     .map((id) => assetMap.get(id))
     .filter((asset): asset is VisualAsset => Boolean(asset))
     .filter((asset) => asset.id !== heroAsset?.id)
-    .slice(0, 2)
+    .slice(0, 5)
 
   if (supportAssets.length === 0) {
-    supportAssets.push(...assets.filter((asset) => asset.id !== heroAsset?.id).slice(0, 2))
+    supportAssets.push(...assets.filter((asset) => asset.id !== heroAsset?.id).slice(0, 5))
   }
 
   const palette = spec.palette
-  const sections = spec.sections.slice(0, 3)
-  const stats = spec.stats.slice(0, 4)
+  const sections = spec.sections
+  const stats = spec.stats
   const layoutVariant = resolveLayoutVariant(spec, assets.length)
 
+  if (layoutVariant === "editorial-mosaic") {
+    const titleLines = clampLines(wrapText(spec.title, 584, 58, 900, DISPLAY_FONT_STACK), 4)
+    const subtitleLines = clampLines(wrapText(spec.subtitle, 584, 25, 600, BODY_FONT_STACK), 4)
+    const statGrid = renderStatGrid({
+      stats,
+      palette,
+      x: 54,
+      y: 648,
+      width: 972,
+      columns: Math.min(4, Math.max(2, stats.length >= 6 ? 4 : 3)),
+      cardHeight: stats.length > 4 ? 138 : 150,
+      gapX: 18,
+      gapY: 18,
+    })
+    const sectionGrid = renderColumnSections({
+      sections,
+      palette,
+      x: 54,
+      y: 648 + statGrid.height + 34,
+      width: 972,
+      columns: Math.min(3, Math.max(1, sections.length >= 4 ? 3 : 2)),
+      cardHeight: sections.length > 4 ? 214 : 240,
+      gapX: 18,
+      gapY: 18,
+    })
+    const heroStrip = supportAssets
+      .slice(0, 3)
+      .map((asset, index) =>
+        renderImageFrame(asset, { x: 718 + index * 100, y: 490, width: 88, height: 78, radius: 16, clipId: `mosaic-support-${index}` })
+      )
+      .join("")
+    const takeawayY = Math.min(1398, 648 + statGrid.height + 34 + sectionGrid.height + 30)
+
+    return `
+      <svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS_WIDTH}" height="${CANVAS_HEIGHT}" viewBox="0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}">
+        ${renderBackdrop(spec)}
+        ${renderKicker("चुनाव एक्सप्लेनर", palette)}
+        <rect x="54" y="118" width="638" height="496" rx="34" fill="${palette.surface}" filter="url(#panelShadow)" />
+        <rect x="54" y="118" width="638" height="12" rx="34" fill="${palette.accent}" />
+        ${renderImageFrame(heroAsset, { x: 716, y: 118, width: 310, height: 350, radius: 30, clipId: "mosaic-hero" })}
+        ${heroStrip}
+        <circle cx="970" cy="542" r="56" fill="#ffffff" filter="url(#panelShadow)" />
+        <text x="970" y="556" text-anchor="middle" fill="${palette.accent}" font-size="26" font-weight="900" font-family="${DISPLAY_FONT_STACK}">VS</text>
+        ${renderTextLines({ lines: titleLines, x: 88, y: 210, fontSize: 58, lineHeight: 64, color: palette.text, weight: 900, fontFamily: DISPLAY_FONT_STACK })}
+        ${renderTextLines({ lines: subtitleLines, x: 88, y: 470, fontSize: 25, lineHeight: 32, color: palette.muted, weight: 600, fontFamily: BODY_FONT_STACK })}
+        <line x1="54" y1="630" x2="1026" y2="630" stroke="${palette.accent}" stroke-opacity="0.22" stroke-width="3" />
+        ${statGrid.markup}
+        ${sectionGrid.markup}
+        ${renderTakeawayBand(spec, takeawayY, 120)}
+        <text x="54" y="1562" fill="${palette.muted}" font-size="18" font-weight="700" font-family="${BODY_FONT_STACK}">${escapeXml(spec.footer)}</text>
+      </svg>
+    `.trim()
+  }
+
+  if (layoutVariant === "timeline-focus") {
+    const titleLines = clampLines(wrapText(spec.title, 860, 54, 900, DISPLAY_FONT_STACK), 3)
+    const subtitleLines = clampLines(wrapText(spec.subtitle, 860, 24, 600, BODY_FONT_STACK), 3)
+    const statGrid = renderStatGrid({ stats, palette, x: 54, y: 334, width: 972, columns: Math.min(4, Math.max(2, stats.length)), cardHeight: 140 })
+    const sectionStack = renderStackSections({ sections, palette, x: 54, y: 334 + statGrid.height + 28, width: 972, accentWidth: 236 })
+    const heroBadge = supportAssets[0]
+      ? renderImageFrame(supportAssets[0], { x: 808, y: 164, width: 218, height: 138, radius: 24, clipId: "timeline-support" })
+      : ""
+    const takeawayY = Math.min(1412, 334 + statGrid.height + 28 + sectionStack.height + 26)
+
+    return `
+      <svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS_WIDTH}" height="${CANVAS_HEIGHT}" viewBox="0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}">
+        ${renderBackdrop(spec)}
+        ${renderKicker("डीप डाइव", palette)}
+        <rect x="54" y="118" width="972" height="184" rx="34" fill="${palette.surface}" filter="url(#panelShadow)" />
+        <rect x="54" y="118" width="972" height="12" rx="34" fill="${palette.accent}" />
+        ${heroBadge}
+        ${renderTextLines({ lines: titleLines, x: 88, y: 194, fontSize: 54, lineHeight: 60, color: palette.text, weight: 900, fontFamily: DISPLAY_FONT_STACK })}
+        ${renderTextLines({ lines: subtitleLines, x: 88, y: 282, fontSize: 24, lineHeight: 30, color: palette.muted, weight: 600, fontFamily: BODY_FONT_STACK })}
+        ${statGrid.markup}
+        ${sectionStack.markup}
+        ${renderTakeawayBand(spec, takeawayY, 116)}
+        <text x="54" y="1562" fill="${palette.muted}" font-size="18" font-weight="700" font-family="${BODY_FONT_STACK}">${escapeXml(spec.footer)}</text>
+      </svg>
+    `.trim()
+  }
+
   if (layoutVariant === "image-lead") {
-    const titleLines = clampLines(wrapText(spec.title, 320, 52), 4)
-    const subtitleLines = clampLines(wrapText(spec.subtitle, 320, 24), 4)
+    const titleLines = clampLines(wrapText(spec.title, 320, 52, 900, DISPLAY_FONT_STACK), 4)
+    const subtitleLines = clampLines(wrapText(spec.subtitle, 320, 24, 600, BODY_FONT_STACK), 4)
     const statGrid = renderStatGrid({ stats, palette, x: 54, y: 634, width: 972, columns: 2, cardHeight: 148, gapX: 20, gapY: 20 })
     const sectionGrid = renderColumnSections({
       sections,
@@ -402,19 +568,21 @@ function buildInfographicSvg(spec: InfographicSpec, assets: VisualAsset[]) {
       y: 634 + statGrid.height + 38,
       width: 972,
       columns: Math.min(3, Math.max(1, sections.length)),
-      cardHeight: 270,
+      cardHeight: sections.length > 3 ? 228 : 270,
       gapX: 18,
       gapY: 18,
     })
     const takeawayY = 634 + statGrid.height + 38 + sectionGrid.height + 34
     const supportMarkup = supportAssets
-      .map((asset, index) => renderImageFrame(asset, { x: 816 + index * 104, y: 500, width: 92, height: 74, radius: 16, clipId: `image-lead-support-${index}` }))
+      .slice(0, 3)
+      .map((asset, index) => renderImageFrame(asset, { x: 782 + index * 82, y: 500, width: 74, height: 74, radius: 16, clipId: `image-lead-support-${index}` }))
       .join("")
 
     return `
       <svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS_WIDTH}" height="${CANVAS_HEIGHT}" viewBox="0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}">
-        <rect width="1080" height="1600" fill="${palette.background}" />
-        <rect x="54" y="108" width="394" height="478" rx="30" fill="${palette.surface}" />
+        ${renderBackdrop(spec)}
+        ${renderKicker("विजुअल ब्रीफ", palette)}
+        <rect x="54" y="108" width="394" height="478" rx="30" fill="${palette.surface}" filter="url(#panelShadow)" />
         <rect x="54" y="108" width="394" height="10" fill="${palette.accent}" />
         ${renderImageFrame(heroAsset, { x: 472, y: 108, width: 554, height: 478, radius: 30, clipId: "image-lead-hero" })}
         ${supportMarkup}
@@ -426,6 +594,7 @@ function buildInfographicSvg(spec: InfographicSpec, assets: VisualAsset[]) {
           lineHeight: 58,
           color: palette.text,
           weight: 900,
+          fontFamily: DISPLAY_FONT_STACK,
         })}
         ${renderTextLines({
           lines: subtitleLines,
@@ -435,29 +604,32 @@ function buildInfographicSvg(spec: InfographicSpec, assets: VisualAsset[]) {
           lineHeight: 30,
           color: palette.muted,
           weight: 600,
+          fontFamily: BODY_FONT_STACK,
         })}
         <line x1="54" y1="606" x2="1026" y2="606" stroke="${palette.accent}" stroke-opacity="0.18" stroke-width="3" />
         ${statGrid.markup}
         ${sectionGrid.markup}
         ${renderTakeawayBand(spec, takeawayY, 132)}
-        <text x="54" y="1566" fill="${palette.muted}" font-size="18" font-weight="700" font-family="Inter, Arial, sans-serif">${escapeXml(spec.footer)}</text>
+        <text x="54" y="1562" fill="${palette.muted}" font-size="18" font-weight="700" font-family="${BODY_FONT_STACK}">${escapeXml(spec.footer)}</text>
       </svg>
     `.trim()
   }
 
   if (layoutVariant === "data-lead") {
-    const titleLines = clampLines(wrapText(spec.title, 840, 52), 3)
-    const subtitleLines = clampLines(wrapText(spec.subtitle, 840, 24), 3)
-    const statGrid = renderStatGrid({ stats, palette, x: 54, y: 364, width: 634, columns: 2, cardHeight: 156 })
+    const titleLines = clampLines(wrapText(spec.title, 840, 52, 900, DISPLAY_FONT_STACK), 3)
+    const subtitleLines = clampLines(wrapText(spec.subtitle, 840, 24, 600, BODY_FONT_STACK), 3)
+    const statGrid = renderStatGrid({ stats, palette, x: 54, y: 364, width: 634, columns: Math.min(2, stats.length || 2), cardHeight: stats.length > 4 ? 144 : 156 })
     const sectionStack = renderStackSections({ sections, palette, x: 54, y: 730, width: 972, accentWidth: 220 })
     const supportMarkup = supportAssets
+      .slice(0, 2)
       .map((asset, index) => renderImageFrame(asset, { x: 718 + index * 150, y: 606, width: 140, height: 88, radius: 18, clipId: `data-lead-support-${index}` }))
       .join("")
 
     return `
       <svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS_WIDTH}" height="${CANVAS_HEIGHT}" viewBox="0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}">
-        <rect width="1080" height="1600" fill="${palette.background}" />
-        <rect x="54" y="108" width="972" height="214" rx="30" fill="${palette.surface}" />
+        ${renderBackdrop(spec)}
+        ${renderKicker("डेटा फोकस", palette)}
+        <rect x="54" y="108" width="972" height="214" rx="30" fill="${palette.surface}" filter="url(#panelShadow)" />
         <rect x="54" y="108" width="972" height="10" fill="${palette.accent}" />
         ${renderTextLines({
           lines: titleLines,
@@ -467,6 +639,7 @@ function buildInfographicSvg(spec: InfographicSpec, assets: VisualAsset[]) {
           lineHeight: 58,
           color: palette.text,
           weight: 900,
+          fontFamily: DISPLAY_FONT_STACK,
         })}
         ${renderTextLines({
           lines: subtitleLines,
@@ -476,6 +649,7 @@ function buildInfographicSvg(spec: InfographicSpec, assets: VisualAsset[]) {
           lineHeight: 30,
           color: palette.muted,
           weight: 600,
+          fontFamily: BODY_FONT_STACK,
         })}
         ${statGrid.markup}
         ${renderImageFrame(heroAsset, { x: 718, y: 364, width: 308, height: 224, radius: 28, clipId: "data-lead-hero" })}
@@ -483,24 +657,26 @@ function buildInfographicSvg(spec: InfographicSpec, assets: VisualAsset[]) {
         <line x1="54" y1="712" x2="1026" y2="712" stroke="${palette.accent}" stroke-opacity="0.18" stroke-width="3" />
         ${sectionStack.markup}
         ${renderTakeawayBand(spec, 1288, 128)}
-        <text x="54" y="1566" fill="${palette.muted}" font-size="18" font-weight="700" font-family="Inter, Arial, sans-serif">${escapeXml(spec.footer)}</text>
+        <text x="54" y="1562" fill="${palette.muted}" font-size="18" font-weight="700" font-family="${BODY_FONT_STACK}">${escapeXml(spec.footer)}</text>
       </svg>
     `.trim()
   }
 
-  const titleLines = clampLines(wrapText(spec.title, 560, 54), 3)
-  const subtitleLines = clampLines(wrapText(spec.subtitle, 560, 24), 3)
-  const statGrid = renderStatGrid({ stats, palette, x: 54, y: 644, width: 972, columns: 4, cardHeight: 150 })
+  const titleLines = clampLines(wrapText(spec.title, 560, 54, 900, DISPLAY_FONT_STACK), 3)
+  const subtitleLines = clampLines(wrapText(spec.subtitle, 560, 24, 600, BODY_FONT_STACK), 3)
+  const statGrid = renderStatGrid({ stats, palette, x: 54, y: 644, width: 972, columns: Math.min(4, Math.max(2, stats.length)), cardHeight: stats.length > 4 ? 138 : 150 })
   const sectionStack = renderStackSections({ sections, palette, x: 54, y: 644 + statGrid.height + 52, width: 972 })
   const supportMarkup = supportAssets
+    .slice(0, 2)
     .map((asset, index) => renderImageFrame(asset, { x: 734 + index * 152, y: 486, width: 140, height: 116, radius: 18, clipId: `split-support-${index}` }))
     .join("")
   const takeawayY = 644 + statGrid.height + 52 + sectionStack.height + 42
 
   return `
     <svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS_WIDTH}" height="${CANVAS_HEIGHT}" viewBox="0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}">
-      <rect width="1080" height="1600" fill="${palette.background}" />
-      <rect x="54" y="108" width="652" height="496" rx="30" fill="${palette.surface}" />
+      ${renderBackdrop(spec)}
+      ${renderKicker("स्टोरी फ्रेम", palette)}
+      <rect x="54" y="108" width="652" height="496" rx="30" fill="${palette.surface}" filter="url(#panelShadow)" />
       <rect x="54" y="108" width="652" height="10" fill="${palette.accent}" />
       ${renderImageFrame(heroAsset, { x: 734, y: 118, width: 292, height: 350, radius: 28, clipId: "split-hero" })}
       ${supportMarkup}
@@ -512,6 +688,7 @@ function buildInfographicSvg(spec: InfographicSpec, assets: VisualAsset[]) {
         lineHeight: 60,
         color: palette.text,
         weight: 900,
+        fontFamily: DISPLAY_FONT_STACK,
       })}
       ${renderTextLines({
         lines: subtitleLines,
@@ -521,12 +698,13 @@ function buildInfographicSvg(spec: InfographicSpec, assets: VisualAsset[]) {
         lineHeight: 30,
         color: palette.muted,
         weight: 600,
+        fontFamily: BODY_FONT_STACK,
       })}
       <line x1="54" y1="622" x2="1026" y2="622" stroke="${palette.accent}" stroke-opacity="0.18" stroke-width="3" />
       ${statGrid.markup}
       ${sectionStack.markup}
       ${renderTakeawayBand(spec, takeawayY, 114)}
-      <text x="54" y="1566" fill="${palette.muted}" font-size="18" font-weight="700" font-family="Inter, Arial, sans-serif">${escapeXml(spec.footer)}</text>
+      <text x="54" y="1562" fill="${palette.muted}" font-size="18" font-weight="700" font-family="${BODY_FONT_STACK}">${escapeXml(spec.footer)}</text>
     </svg>
   `.trim()
 }
@@ -632,6 +810,13 @@ async function downloadPng(svg: string, fileName: string) {
   }
 }
 
+function downloadDataUrl(dataUrl: string, fileName: string) {
+  const anchor = document.createElement("a")
+  anchor.href = dataUrl
+  anchor.download = fileName
+  anchor.click()
+}
+
 async function postJson<T>(url: string, body: unknown) {
   const response = await fetch(url, {
     method: "POST",
@@ -662,6 +847,8 @@ export default function CmsPage() {
 
   const svg = result ? buildInfographicSvg(result.infographic, result.assets) : null
   const svgPreview = svg ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}` : null
+  const finalImageDataUrl = result?.finalImage.dataUrl ?? null
+  const previewImage = finalImageDataUrl ?? svgPreview
   const hasDraft = Boolean(result)
   const assetCount = result?.assets.length ?? 0
   const sourceCount = result?.extractedSources.length ?? 0
@@ -764,10 +951,10 @@ export default function CmsPage() {
                   <Badge className="bg-[#9d1c1f] text-white hover:bg-[#9d1c1f]">/cms</Badge>
                   <CardTitle className="mt-3 text-2xl">Infographic Chat Studio</CardTitle>
                 </div>
-                <Badge variant="secondary">GPT-4.1 / GPT-4.1 mini</Badge>
+                <Badge variant="secondary">GPT-5.3 chat + image render</Badge>
               </div>
               <p className="text-sm leading-6 text-muted-foreground">
-                Paste a story link, attach a few images, and iterate on the same draft naturally. Every link is scraped for text and images before generation, while uploaded images stay highest priority.
+                Paste a story link, attach a few images, and iterate on the same draft naturally. The pipeline now extracts facts, builds art direction, generates a final image, and falls back to the internal renderer only if image generation fails.
               </p>
               <p className="text-xs leading-5 text-muted-foreground">
                 Style-reference infographic samples can be added at `public/cms-templates/`. They are used only for layout and visual quality guidance, never for factual content or image reuse.
@@ -932,26 +1119,36 @@ export default function CmsPage() {
                 <div>
                   <CardTitle>Generated infographic</CardTitle>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    Live combined visual assembled from the structured response and selected media.
+                    Model-rendered image when available, with the richer SVG renderer as a fallback.
                   </p>
                 </div>
 
-                {svg ? (
+                {result ? (
                   <div className="flex items-center gap-2">
-                    <Button type="button" variant="outline" size="sm" onClick={() => void downloadSvg(svg, "cms-infographic") }>
-                      <DownloadIcon />
-                      SVG
-                    </Button>
-                    <Button type="button" size="sm" className="bg-[#9d1c1f] text-white hover:bg-[#82171a]" onClick={() => void downloadPng(svg, "cms-infographic") }>
-                      <DownloadIcon />
-                      PNG
-                    </Button>
+                    {result.finalImage.dataUrl ? (
+                      <Button type="button" size="sm" className="bg-[#9d1c1f] text-white hover:bg-[#82171a]" onClick={() => downloadDataUrl(result.finalImage.dataUrl!, "cms-infographic.png") }>
+                        <DownloadIcon />
+                        PNG
+                      </Button>
+                    ) : null}
+                    {svg ? (
+                      <>
+                        <Button type="button" variant="outline" size="sm" onClick={() => void downloadSvg(svg, "cms-infographic") }>
+                          <DownloadIcon />
+                          SVG
+                        </Button>
+                        <Button type="button" variant="outline" size="sm" onClick={() => void downloadPng(svg, "cms-infographic-fallback") }>
+                          <DownloadIcon />
+                          Fallback PNG
+                        </Button>
+                      </>
+                    ) : null}
                   </div>
                 ) : null}
               </CardHeader>
               <CardContent>
                 {result ? (
-                  <div className="mb-4 grid gap-3 sm:grid-cols-3">
+                  <div className="mb-4 grid gap-3 sm:grid-cols-4">
                     <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900">
                       <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Title</p>
                       <p className="mt-2 text-sm font-semibold leading-6">{result.infographic.title}</p>
@@ -966,16 +1163,28 @@ export default function CmsPage() {
                         {result.infographic.layoutVariant}, {result.infographic.stats.length} stats, {result.infographic.sections.length} sections, {result.infographic.heroAssetIds.length} hero picks
                       </p>
                     </div>
+                    <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3 dark:border-zinc-800 dark:bg-zinc-900">
+                      <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">Render</p>
+                      <p className="mt-2 text-sm leading-6 text-foreground/85">{result.renderMode === "model-image" ? `Image model: ${result.finalImage.model}` : `Fallback renderer: ${result.finalImage.error ?? "image unavailable"}`}</p>
+                    </div>
                   </div>
                 ) : null}
 
-                {svgPreview ? (
-                  <img src={svgPreview} alt="Generated infographic preview" className="w-full rounded-[28px] border border-zinc-200 bg-[#f8f4ec] shadow-sm dark:border-zinc-800" />
+                {previewImage ? (
+                  <img src={previewImage} alt="Generated infographic preview" className="w-full rounded-[28px] border border-zinc-200 bg-[#f8f4ec] shadow-sm dark:border-zinc-800" />
                 ) : (
                   <div className="flex aspect-[27/40] items-center justify-center rounded-[28px] border border-dashed border-zinc-300 bg-zinc-50 text-center text-sm leading-6 text-muted-foreground dark:border-zinc-800 dark:bg-zinc-900">
                     The infographic preview appears here after the first generation.
                   </div>
                 )}
+
+                {result ? (
+                  <div className="mt-4 rounded-2xl border border-zinc-200 bg-zinc-50 p-4 text-sm leading-6 dark:border-zinc-800 dark:bg-zinc-900">
+                    <p className="font-semibold text-foreground">QA</p>
+                    <p className="mt-2 text-foreground/85">{result.qa.summary}</p>
+                    {result.qa.issues.length > 0 ? <p className="mt-2 text-muted-foreground">Issues: {result.qa.issues.join(" | ")}</p> : null}
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
 
@@ -1066,6 +1275,30 @@ export default function CmsPage() {
                 <CardTitle>Extraction harness</CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
+                {result?.facts.length ? (
+                  <div className="space-y-3">
+                    <p className="text-sm font-semibold">Key facts</p>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      {result.facts.map((fact, index) => (
+                        <div key={`${fact.label}-${index}`} className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900">
+                          <p className="text-xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">{fact.label}</p>
+                          <p className="mt-2 text-lg font-semibold leading-7">{fact.value}</p>
+                          <p className="mt-2 text-sm leading-6 text-muted-foreground">{fact.detail}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+
+                {result ? (
+                  <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-zinc-900">
+                    <p className="text-sm font-semibold">Art direction</p>
+                    <p className="mt-2 text-sm leading-6 text-foreground/85">{result.artDirection.visualStyle}</p>
+                    <p className="mt-2 text-sm leading-6 text-muted-foreground">{result.artDirection.composition}</p>
+                    <p className="mt-2 text-xs leading-5 text-muted-foreground">Must include: {result.artDirection.mustIncludeText.join(" | ")}</p>
+                  </div>
+                ) : null}
+
                 {result?.extractedSources.length ? (
                   <div className="space-y-3">
                     {result.extractedSources.map((source) => (
@@ -1083,7 +1316,7 @@ export default function CmsPage() {
                   </div>
                 ) : (
                   <p className="text-sm leading-6 text-muted-foreground">
-                    When you include a story link, the server fetches the page, extracts readable text, collects media links, and attempts to read those images before GPT-4.1 mini builds the visual design infographic (poster style) brief.
+                    When you include a story link, the server fetches the page, extracts readable text, collects media links, turns them into a structured facts plan, writes an art-direction prompt, and then attempts a final image render before falling back to the internal SVG renderer.
                   </p>
                 )}
 
