@@ -20,7 +20,7 @@ import {
   INFOGRAPHIC_TEMPLATE_REFERENCES,
   buildTemplateReferenceSummary,
 } from "@/lib/cms/templates"
-import { buildHybridInfographicSvgDataUrl, buildInfographicSvgDataUrl } from "@/lib/cms/render-svg"
+import { buildInfographicSvgDataUrl, buildPosterOverlayCompositeSvgDataUrl } from "@/lib/cms/render-svg"
 
 const CHAT_API_URL = "https://ai-gateway.vercel.sh/v1/chat/completions"
 const IMAGE_API_URL = "https://ai-gateway.vercel.sh/v1/images/generations"
@@ -1354,39 +1354,64 @@ async function generateFinalImage({
   }
 }
 
-function buildBackdropOnlyPrompt({
+function buildReservedPhotoPosterPrompt({
   infographic,
+  facts,
   artDirection,
+  assets,
 }: {
   infographic: InfographicSpec
+  facts: InfographicFact[]
   artDirection: InfographicArtDirection
+  assets: VisualAsset[]
 }) {
+  const hasUpload = assets.some((asset) => asset.source === "upload")
+  const hasArticle = assets.some((asset) => asset.source === "link")
+  const factLines = facts.slice(0, 8).map((fact) => `${fact.label}: ${fact.value} - ${fact.detail}`).join("\n")
+
   return [
-    `Create a vertical editorial infographic backdrop for ${infographic.title}.`,
-    "This is a background/base-layer only, not a finished infographic.",
-    "Do not include people, faces, athletes, products, article photos, logos, badges, team crests, screenshots, or any readable text.",
-    "Do not include stat cards, labels, icons, maps, or literal UI panels that compete with later overlays.",
+    `Create a complete vertical editorial infographic poster for ${infographic.title}.`,
+    `Subtitle: ${infographic.subtitle}`,
+    `Takeaway: ${infographic.takeaway}`,
+    factLines ? `Key facts:\n${factLines}` : "",
     `Visual style: ${artDirection.visualStyle}`,
+    `Composition: ${artDirection.composition}`,
+    `Typography: ${artDirection.typography}`,
     `Color direction: ${artDirection.colorDirection}`,
-    "Use subtle editorial atmosphere, restrained gradients, soft texture, and publication-quality depth.",
-    "Keep the center and left reading areas relatively calm so overlaid typography remains readable.",
-    "The result should feel premium and designed, but quiet enough to serve as a compositing base.",
+    "The poster should be publication-ready and visually rich with the same overall quality as a fully AI-generated editorial graphic.",
+    "Important: reserve dedicated clean photo windows for compositing real source images later.",
+    "Do not place important text or key icons inside these photo windows.",
+    hasUpload
+      ? "Reserve one large rounded hero photo window in the upper-right area. Keep it visually integrated but clearly readable as a photo slot."
+      : "",
+    hasUpload || hasArticle
+      ? "Reserve three smaller rounded supporting photo windows in a horizontal row directly below the hero window on the right side."
+      : "",
+    "Inside the reserved photo windows, use only subtle dark gradient placeholders or neutral blurred fills. Do not place real people, sports gear, landmarks, logos, or text there.",
+    "Generate the rest of the poster completely: headline, subheadline, sections, stats, mood, background, and supporting infographic design everywhere outside those windows.",
+    "Keep headline and all essential text away from the reserved windows so nothing important gets covered after compositing.",
+    `Visual style: ${artDirection.visualStyle}`,
+    "Do not translate the language unless explicitly requested.",
   ].join("\n\n")
 }
 
-async function generateHybridBackdrop({
+async function generateReservedPhotoPoster({
   infographic,
+  facts,
   artDirection,
+  assets,
 }: {
   infographic: InfographicSpec
+  facts: InfographicFact[]
   artDirection: InfographicArtDirection
+  assets: VisualAsset[]
 }) {
   try {
     const generatedImage = await requestRenderedImage({
       url: IMAGE_API_URL,
       body: JSON.stringify({
         model: IMAGE_MODEL_ID,
-        prompt: buildBackdropOnlyPrompt({ infographic, artDirection }),
+        prompt: buildReservedPhotoPosterPrompt({ infographic, facts, artDirection, assets }),
         size: "1024x1536",
       }),
     })
@@ -1546,22 +1571,18 @@ function buildDeterministicImage({
   assets,
   prompt,
   reason,
-  backdropImageDataUrl = null,
   model = "deterministic-svg",
 }: {
   infographic: InfographicSpec
   assets: VisualAsset[]
   prompt: string
   reason: string
-  backdropImageDataUrl?: string | null
   model?: string
 }): GeneratedInfographicImage {
   return {
     status: "generated",
     model,
-    dataUrl: backdropImageDataUrl
-      ? buildHybridInfographicSvgDataUrl(infographic, assets, backdropImageDataUrl)
-      : buildInfographicSvgDataUrl(infographic, assets),
+    dataUrl: buildInfographicSvgDataUrl(infographic, assets),
     mimeType: "image/svg+xml",
     prompt,
     revisedPrompt: null,
@@ -1683,21 +1704,29 @@ export async function POST(request: Request) {
       infographic
     )
     const shouldForceDeterministicRender = assets.length > 0
-    const hybridBackdrop = shouldForceDeterministicRender ? await generateHybridBackdrop({ infographic, artDirection }) : null
+    const reservedPhotoPoster = shouldForceDeterministicRender
+      ? await generateReservedPhotoPoster({ infographic, facts, artDirection, assets })
+      : null
     let finalImage = shouldForceDeterministicRender
-      ? buildDeterministicImage({
-          infographic,
-          assets,
-          prompt: buildFinalImagePrompt({ infographic, facts, artDirection, assets }),
-          reason: hybridBackdrop
-            ? "Using hybrid asset-composited render with AI-styled backdrop because source images must appear directly in the final output."
-            : "Using deterministic asset-composited render because source images must appear directly in the final output.",
-          backdropImageDataUrl: hybridBackdrop,
-          model: hybridBackdrop ? `${IMAGE_MODEL_ID}+deterministic-svg` : "deterministic-svg",
-        })
+      ? reservedPhotoPoster
+        ? {
+            status: "generated" as const,
+            model: `${IMAGE_MODEL_ID}+overlay-composite`,
+            dataUrl: buildPosterOverlayCompositeSvgDataUrl(reservedPhotoPoster, assets),
+            mimeType: "image/svg+xml",
+            prompt: buildFinalImagePrompt({ infographic, facts, artDirection, assets }),
+            revisedPrompt: null,
+            error: "Using model poster with reserved image windows plus enforced real-image overlay.",
+          }
+        : buildDeterministicImage({
+            infographic,
+            assets,
+            prompt: buildFinalImagePrompt({ infographic, facts, artDirection, assets }),
+            reason: "Model poster generation failed, using deterministic asset-composited render because source images must appear directly in the final output.",
+          })
       : await generateFinalImage({ infographic, facts, artDirection, assets })
     let renderMode: InfographicResponse["renderMode"] = shouldForceDeterministicRender
-      ? hybridBackdrop
+      ? reservedPhotoPoster
         ? "hybrid-svg"
         : "deterministic-svg"
       : "model-image"

@@ -307,3 +307,73 @@ export function buildHybridInfographicSvgDataUrl(
   const svg = buildInfographicSvg(spec, assets, { backdropImageDataUrl })
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
 }
+
+function renderOverlayCard(
+  asset: VisualAsset | null,
+  {
+    x,
+    y,
+    width,
+    height,
+    radius,
+    clipId,
+  }: {
+    x: number
+    y: number
+    width: number
+    height: number
+    radius: number
+    clipId: string
+  }
+) {
+  if (!asset) {
+    return ""
+  }
+
+  return [
+    `<filter id="shadow-${clipId}" x="-30%" y="-30%" width="160%" height="180%"><feDropShadow dx="0" dy="16" stdDeviation="16" flood-color="#000000" flood-opacity="0.28" /></filter>`,
+    `<clipPath id="${clipId}"><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${radius}" /></clipPath>`,
+    `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${radius}" fill="#ffffff" fill-opacity="0.96" filter="url(#shadow-${clipId})" />`,
+    `<image href="${asset.dataUrl}" x="${x}" y="${y}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clipId})" />`,
+    `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${radius}" fill="none" stroke="#ffffff" stroke-opacity="0.92" stroke-width="4" />`,
+  ].join("")
+}
+
+function planOverlaySlots(assets: VisualAsset[]) {
+  const uploaded = assets.filter((asset) => asset.source === "upload")
+  const linked = assets.filter((asset) => asset.source === "link")
+  const hero = uploaded[0] ?? linked[0] ?? null
+  const support = [...uploaded.slice(1), ...linked, ...assets].filter((asset) => asset.id !== hero?.id)
+  const heroRatio = hero?.width && hero?.height ? hero.width / hero.height : 1.3
+  const isWideHero = heroRatio >= 1.2
+
+  return {
+    hero,
+    heroSlot: isWideHero
+      ? { x: 598, y: 118, width: 380, height: 238, radius: 26, clipId: "overlay-hero" }
+      : { x: 724, y: 118, width: 254, height: 344, radius: 26, clipId: "overlay-hero" },
+    support: support.slice(0, 3),
+    supportSlots: [
+      { x: 598, y: 388, width: 118, height: 118, radius: 18, clipId: "overlay-support-0" },
+      { x: 730, y: 388, width: 118, height: 118, radius: 18, clipId: "overlay-support-1" },
+      { x: 862, y: 388, width: 118, height: 118, radius: 18, clipId: "overlay-support-2" },
+    ],
+  }
+}
+
+export function buildPosterOverlayCompositeSvgDataUrl(backgroundDataUrl: string, assets: VisualAsset[]) {
+  const { hero, heroSlot, support, supportSlots } = planOverlaySlots(assets)
+
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS_WIDTH}" height="${CANVAS_HEIGHT}" viewBox="0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}">
+      <rect width="1080" height="1600" fill="#0f172a" />
+      <image href="${backgroundDataUrl}" x="0" y="0" width="1080" height="1600" preserveAspectRatio="xMidYMid slice" />
+      ${renderOverlayCard(hero, heroSlot)}
+      ${support
+        .map((asset, index) => renderOverlayCard(asset, supportSlots[index]!))
+        .join("")}
+    </svg>
+  `.trim()
+
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+}
