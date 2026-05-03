@@ -10,6 +10,8 @@ export type UploadedAsset = {
   name: string
   mediaType: string
   dataUrl: string
+  width?: number
+  height?: number
 }
 
 export type SourceKind = "upload" | "link"
@@ -21,6 +23,8 @@ export type VisualAsset = {
   mediaType: string
   dataUrl: string
   originUrl: string | null
+  width?: number
+  height?: number
 }
 
 export type ExtractedSource = {
@@ -56,6 +60,8 @@ export type InfographicLayoutVariant =
   | "editorial-mosaic"
   | "timeline-focus"
 
+export type InfographicLanguage = "en" | "hi" | "mixed"
+
 export type InfographicFact = {
   label: string
   value: string
@@ -90,6 +96,7 @@ export type GeneratedInfographicImage = {
 }
 
 export type InfographicSpec = {
+  contentLanguage: InfographicLanguage
   title: string
   subtitle: string
   takeaway: string
@@ -115,10 +122,11 @@ export type InfographicResponse = {
 }
 
 export const DEFAULT_INFOGRAPHIC: InfographicSpec = {
+  contentLanguage: "en",
   title: "Infographic Draft",
-  subtitle: "Add a source link and a few images to generate a sharper visual design infographic (poster style).",
-  takeaway: "User-provided images are given highest priority during layout selection.",
-  footer: "Editorial visual design poster draft",
+  subtitle: "Add a source link and a few images to generate a sharper article-led infographic draft.",
+  takeaway: "Uploaded images and article images should be used directly when available.",
+  footer: "Editorial infographic draft",
   layoutVariant: "editorial-mosaic",
   palette: {
     background: "#f4efe7",

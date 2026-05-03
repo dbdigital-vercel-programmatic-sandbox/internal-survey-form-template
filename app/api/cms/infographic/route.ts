@@ -9,6 +9,7 @@ import {
   type GeneratedInfographicImage,
   type InfographicArtDirection,
   type InfographicFact,
+  type InfographicLanguage,
   type InfographicQa,
   type InfographicResponse,
   type InfographicSpec,
@@ -135,6 +136,10 @@ const FACTS_SCHEMA = {
           subtitle: { type: "string" },
           takeaway: { type: "string" },
           footer: { type: "string" },
+          contentLanguage: {
+            type: "string",
+            enum: ["en", "hi", "mixed"],
+          },
           layoutVariant: {
             type: "string",
             enum: [...INFOGRAPHIC_LAYOUT_VARIANTS],
@@ -192,6 +197,7 @@ const FACTS_SCHEMA = {
           "subtitle",
           "takeaway",
           "footer",
+          "contentLanguage",
           "layoutVariant",
           "palette",
           "stats",
@@ -342,6 +348,10 @@ function sanitizeText(value: string, maxLength: number) {
   return value.replace(/\s+/g, " ").trim().slice(0, maxLength)
 }
 
+function countMatches(value: string, pattern: RegExp) {
+  return value.match(pattern)?.length ?? 0
+}
+
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
@@ -375,6 +385,40 @@ function stripTags(html: string) {
     .replace(/&amp;/gi, "&")
     .replace(/&quot;/gi, '"')
     .replace(/&#39;/gi, "'")
+}
+
+function detectPreferredLanguage({
+  prompt,
+  sources,
+}: {
+  prompt: string
+  sources: ExtractedSource[]
+}): InfographicLanguage {
+  const haystack = [prompt, ...sources.flatMap((source) => [source.title ?? "", source.description ?? "", source.textSnippet.slice(0, 1200)])].join(" ")
+  const devanagariCount = countMatches(haystack, /[\u0900-\u097F]/g)
+  const latinWordCount = countMatches(haystack, /\b[a-zA-Z]{2,}\b/g)
+
+  if (devanagariCount > 0 && latinWordCount > 10) {
+    return "mixed"
+  }
+
+  if (devanagariCount > latinWordCount) {
+    return "hi"
+  }
+
+  return "en"
+}
+
+function describeLanguage(language: InfographicLanguage) {
+  if (language === "hi") {
+    return "Hindi"
+  }
+
+  if (language === "mixed") {
+    return "mixed Hindi-English"
+  }
+
+  return "English"
 }
 
 function matchMeta(html: string, key: string) {
@@ -816,11 +860,12 @@ function normalizeFacts(value: unknown) {
 
 function normalizeArtDirection(value: unknown, infographic: InfographicSpec): InfographicArtDirection {
   const fallbackText = [infographic.title, infographic.subtitle, infographic.takeaway].filter(Boolean)
+  const languageLabel = describeLanguage(infographic.contentLanguage)
   return {
     visualStyle:
       typeof (value as InfographicArtDirection | undefined)?.visualStyle === "string"
         ? sanitizeText((value as InfographicArtDirection).visualStyle, 240)
-        : "Clean Hindi-first newsroom explainer with restrained editorial styling and a believable print-magazine feel.",
+        : `Clean ${languageLabel} newsroom explainer with restrained editorial styling and a believable print-magazine feel.`,
     composition:
       typeof (value as InfographicArtDirection | undefined)?.composition === "string"
         ? sanitizeText((value as InfographicArtDirection).composition, 320)
@@ -828,7 +873,7 @@ function normalizeArtDirection(value: unknown, infographic: InfographicSpec): In
     typography:
       typeof (value as InfographicArtDirection | undefined)?.typography === "string"
         ? sanitizeText((value as InfographicArtDirection).typography, 220)
-        : "Confident Devanagari-first headline typography with readable supporting labels and restrained emphasis.",
+        : `Confident ${languageLabel} headline typography with readable supporting labels and restrained emphasis.`,
     colorDirection:
       typeof (value as InfographicArtDirection | undefined)?.colorDirection === "string"
         ? sanitizeText((value as InfographicArtDirection).colorDirection, 220)
@@ -836,7 +881,7 @@ function normalizeArtDirection(value: unknown, infographic: InfographicSpec): In
     imagePrompt:
       typeof (value as InfographicArtDirection | undefined)?.imagePrompt === "string"
         ? sanitizeText((value as InfographicArtDirection).imagePrompt, 6000)
-        : `Create a vertical Hindi news explainer layout for ${infographic.title} with a natural, grounded editorial tone.`,
+        : `Create a vertical ${languageLabel} news explainer layout for ${infographic.title} with a natural, grounded editorial tone.`,
     negativePrompt:
       typeof (value as InfographicArtDirection | undefined)?.negativePrompt === "string"
         ? sanitizeText((value as InfographicArtDirection).negativePrompt, 1000)
@@ -866,7 +911,8 @@ function normalizeQa(value: unknown): InfographicQa {
 function normalizeInfographic(
   value: Partial<InfographicSpec> | undefined,
   assetIds: string[],
-  fallbackPalette: InfographicSpec["palette"]
+  fallbackPalette: InfographicSpec["palette"],
+  fallbackLanguage: InfographicLanguage
 ): InfographicSpec {
   const stats = Array.isArray(value?.stats)
     ? value.stats
@@ -911,6 +957,10 @@ function normalizeInfographic(
           : DEFAULT_INFOGRAPHIC.layoutVariant
 
   return {
+    contentLanguage:
+      value?.contentLanguage === "en" || value?.contentLanguage === "hi" || value?.contentLanguage === "mixed"
+        ? value.contentLanguage
+        : fallbackLanguage,
     title: typeof value?.title === "string" ? sanitizeText(value.title, 96) : DEFAULT_INFOGRAPHIC.title,
     subtitle: typeof value?.subtitle === "string" ? sanitizeText(value.subtitle, 180) : DEFAULT_INFOGRAPHIC.subtitle,
     takeaway: typeof value?.takeaway === "string" ? sanitizeText(value.takeaway, 220) : DEFAULT_INFOGRAPHIC.takeaway,
@@ -930,12 +980,14 @@ async function callFactsModel({
   history,
   sources,
   assets,
+  preferredLanguage,
 }: {
   mode: "setup" | "refinement"
   prompt: string
   history: ChatMessage[]
   sources: ExtractedSource[]
   assets: VisualAsset[]
+  preferredLanguage: InfographicLanguage
 }) {
   const assetSummary = buildAssetSummary(assets)
   const sourceSummary = buildSourceSummary(sources)
@@ -950,7 +1002,8 @@ async function callFactsModel({
         content: [
           "You are a newsroom researcher and infographic planner.",
           "Extract only the most relevant facts, election math, geography, and narrative context from the provided source material.",
-          "Return concise but publishable infographic copy in Hindi or mixed Hindi-English matching the user request.",
+          `Return concise but publishable infographic copy in ${describeLanguage(preferredLanguage)} matching the user request and source material.`,
+          "Do not translate an English story into Hindi unless the user explicitly asks for Hindi.",
           "Do not design a website. Plan an editorial vertical poster infographic.",
           "Prefer clear, grounded modules, not sparse marketing copy or hyper-stylized poster theatrics.",
           "When visuals are available, treat uploaded images as primary references and article images as secondary support.",
@@ -972,6 +1025,7 @@ async function callFactsModel({
             type: "text",
             text: [
               `User request: ${sanitizeText(prompt, 2400)}`,
+              `Primary language to preserve: ${describeLanguage(preferredLanguage)}`,
               sources.length > 0 ? `Scraped source context:\n${sourceSummary}` : "No source links were available.",
               assets.length > 0 ? `Available visual assets:\n${assetSummary}` : "No visual assets were available.",
               "Return facts, a structured infographic spec, and recommended asset ids.",
@@ -1000,12 +1054,14 @@ async function callArtDirectionModel({
   assets,
   infographic,
   facts,
+  preferredLanguage,
 }: {
   prompt: string
   sources: ExtractedSource[]
   assets: VisualAsset[]
   infographic: InfographicSpec
   facts: InfographicFact[]
+  preferredLanguage: InfographicLanguage
 }) {
   const templateSummary = buildTemplateReferenceSummary()
   const templateImages = await loadTemplateReferenceImages()
@@ -1020,7 +1076,7 @@ async function callArtDirectionModel({
       {
         role: "system",
         content: [
-          "You are an art director for premium Hindi-first newsroom explainers.",
+          `You are an art director for premium ${describeLanguage(preferredLanguage)} newsroom explainers.`,
           "Your output will drive a final image model, so write a highly specific prompt for a single vertical editorial infographic image.",
           "The image must feel like a finished poster, not a web page, dashboard, or slide deck.",
           "Keep the styling grounded and believable: calm composition, restrained textures, modest accent usage, and clear hierarchy without theatrical excess.",
@@ -1039,6 +1095,7 @@ async function callArtDirectionModel({
             type: "text",
             text: [
               `User request: ${sanitizeText(prompt, 2400)}`,
+              `Primary language to preserve: ${describeLanguage(preferredLanguage)}`,
               `Infographic title: ${infographic.title}`,
               `Subtitle: ${infographic.subtitle}`,
               `Takeaway: ${infographic.takeaway}`,
@@ -1050,7 +1107,7 @@ async function callArtDirectionModel({
               sources.length > 0 ? `Source context:\n${sourceSummary}` : "No source context was available.",
               assets.length > 0 ? `Available visuals:\n${assetSummary}` : "No visuals were available.",
               `Style-only template references:\n${templateSummary}`,
-              "Write the image prompt so the model renders a complete, publication-ready infographic poster with readable Hindi-first typography, distinct information zones, and a more natural editorial finish.",
+              `Write the image prompt so the model renders a complete, publication-ready infographic poster with readable ${describeLanguage(preferredLanguage)} typography, distinct information zones, and a more natural editorial finish.`,
               "If source or uploaded photos are available, explicitly place them as hero/supporting imagery rather than replacing them with generic stock-style substitutes.",
               "Do not overdesign the page with dramatic glows, intense texture, extreme contrast, or flashy decorative elements.",
               "Explicitly avoid a browser screenshot, SaaS dashboard, wireframe, or web card grid aesthetic.",
@@ -1490,6 +1547,8 @@ export async function POST(request: Request) {
         mediaType: normalizeMediaType(item.mediaType || getDataUrlMediaType(item.dataUrl) || "image/jpeg"),
         dataUrl: item.dataUrl,
         originUrl: null,
+        width: typeof item.width === "number" && item.width > 0 ? item.width : undefined,
+        height: typeof item.height === "number" && item.height > 0 ? item.height : undefined,
       }))
 
     const pageImages = pages.flatMap((page) => page.imageUrls.map((url) => ({ page, url })))
@@ -1519,6 +1578,7 @@ export async function POST(request: Request) {
     const sourceSummaries = pages.map((page) => page.source)
     const history = (body.history ?? []).filter((message) => message.role === "user" || message.role === "assistant")
     const fallbackPalette = selectThemePalette({ prompt, sources: sourceSummaries })
+    const preferredLanguage = detectPreferredLanguage({ prompt, sources: sourceSummaries })
 
     const factsResult = await callFactsModel({
       mode,
@@ -1526,13 +1586,14 @@ export async function POST(request: Request) {
       history,
       sources: sourceSummaries,
       assets,
+      preferredLanguage,
     })
 
     const assetIds = assets.map((asset) => asset.id)
     const uploadedAssetIds = uploadedAssets.map((asset) => asset.id)
     const linkedAssetIds = linkAssets.map((asset) => asset.id)
     const recommendedAssets = normalizeStringList(factsResult.recommendedAssets, 6).filter((id) => assetIds.includes(id))
-    const infographic = normalizeInfographic(factsResult.infographic, assetIds, fallbackPalette)
+    const infographic = normalizeInfographic(factsResult.infographic, assetIds, fallbackPalette, preferredLanguage)
 
     infographic.heroAssetIds = preferAssetIds({
       current: infographic.heroAssetIds,
@@ -1560,13 +1621,22 @@ export async function POST(request: Request) {
         assets,
         infographic,
         facts,
+        preferredLanguage,
       }),
       infographic
     )
-    let finalImage = await generateFinalImage({ infographic, facts, artDirection, assets })
-    let renderMode: InfographicResponse["renderMode"] = "model-image"
+    const shouldForceDeterministicRender = assets.length > 0
+    let finalImage = shouldForceDeterministicRender
+      ? buildDeterministicImage({
+          infographic,
+          assets,
+          prompt: buildFinalImagePrompt({ infographic, facts, artDirection, assets }),
+          reason: "Using deterministic asset-composited render because source images were provided and must appear directly in the final output.",
+        })
+      : await generateFinalImage({ infographic, facts, artDirection, assets })
+    let renderMode: InfographicResponse["renderMode"] = shouldForceDeterministicRender ? "deterministic-svg" : "model-image"
 
-    if (finalImage.status !== "generated" || !finalImage.dataUrl) {
+    if (!shouldForceDeterministicRender && (finalImage.status !== "generated" || !finalImage.dataUrl)) {
       finalImage = buildDeterministicImage({
         infographic,
         assets,
@@ -1574,7 +1644,7 @@ export async function POST(request: Request) {
         reason: `Model render failed, using deterministic asset-composited render. ${finalImage.error ?? ""}`.trim(),
       })
       renderMode = "deterministic-svg"
-    } else {
+    } else if (!shouldForceDeterministicRender) {
       const assetUsage = normalizeAssetUsage(
         await callAssetUsageModel({ infographic, finalImage, assets }),
         uploadedAssets.length > 0,
@@ -1597,7 +1667,7 @@ export async function POST(request: Request) {
     const assistantMessageSource =
       typeof factsResult.assistantMessage === "string"
         ? sanitizeText(factsResult.assistantMessage, 900)
-        : `Built a model-rendered infographic draft with ${facts.length} key facts and ${infographic.sections.length} content modules.`
+        : `Built an infographic draft with ${facts.length} key facts and ${infographic.sections.length} content modules.`
 
     const result: InfographicResponse = {
       assistantMessage: assistantMessageSource,

@@ -750,6 +750,8 @@ async function optimizeImage(file: File) {
         name: file.name,
         mediaType: "image/jpeg",
         dataUrl,
+        width: canvas.width,
+        height: canvas.height,
       })
     }
     image.onerror = () => reject(new Error(`Unable to process ${file.name}`))

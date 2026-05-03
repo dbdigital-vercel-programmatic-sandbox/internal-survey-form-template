@@ -5,6 +5,18 @@ const CANVAS_HEIGHT = 1600
 const DISPLAY_FONT_STACK = "'Noto Sans Devanagari', 'Hind', 'Mukta', 'Nirmala UI', Inter, Arial, sans-serif"
 const BODY_FONT_STACK = "'Noto Sans Devanagari', 'Hind', 'Mukta', 'Nirmala UI', Inter, Arial, sans-serif"
 
+function getStoryBriefLabel(language: InfographicSpec["contentLanguage"]) {
+  if (language === "hi") {
+    return "स्टोरी ब्रीफ"
+  }
+
+  if (language === "mixed") {
+    return "Story Brief"
+  }
+
+  return "Story Brief"
+}
+
 function escapeXml(value: string) {
   return value
     .replace(/&/g, "&amp;")
@@ -97,10 +109,19 @@ function renderImageFrame(
     return `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${radius}" fill="#ffffff" stroke="#d4d4d8" />`
   }
 
+  const aspectRatio = asset.width && asset.height ? asset.width / asset.height : null
+  const isExtremeWide = aspectRatio !== null && aspectRatio >= 1.75
+  const isExtremeTall = aspectRatio !== null && aspectRatio <= 0.72
+  const shouldProtectFullImage = asset.source === "upload" && (isExtremeWide || isExtremeTall)
+  const preserveAspectRatio = shouldProtectFullImage ? "xMidYMid meet" : "xMidYMid slice"
+
   return [
     `<clipPath id="${clipId}"><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${radius}" /></clipPath>`,
     `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="${radius}" fill="#ffffff" stroke="#d4d4d8" />`,
-    `<image href="${asset.dataUrl}" x="${x}" y="${y}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clipId})" />`,
+    shouldProtectFullImage
+      ? `<image href="${asset.dataUrl}" x="${x}" y="${y}" width="${width}" height="${height}" preserveAspectRatio="xMidYMid slice" opacity="0.2" clip-path="url(#${clipId})" />`
+      : "",
+    `<image href="${asset.dataUrl}" x="${x}" y="${y}" width="${width}" height="${height}" preserveAspectRatio="${preserveAspectRatio}" clip-path="url(#${clipId})" />`,
   ].join("")
 }
 
@@ -228,7 +249,7 @@ export function buildInfographicSvg(spec: InfographicSpec, assets: VisualAsset[]
       </defs>
       <rect width="1080" height="1600" fill="url(#paper)" />
       <rect x="54" y="44" width="220" height="46" rx="16" fill="#ffffff" stroke="${spec.palette.accent}" stroke-opacity="0.2" />
-      <text x="78" y="73" fill="${spec.palette.accent}" font-size="22" font-weight="800" font-family="${DISPLAY_FONT_STACK}">स्टोरी ब्रीफ</text>
+      <text x="78" y="73" fill="${spec.palette.accent}" font-size="22" font-weight="800" font-family="${DISPLAY_FONT_STACK}">${escapeXml(getStoryBriefLabel(spec.contentLanguage))}</text>
 
       <rect x="54" y="116" width="394" height="520" rx="28" fill="#ffffff" stroke="${spec.palette.accent}" stroke-opacity="0.14" />
       <rect x="54" y="116" width="394" height="10" rx="28" fill="${spec.palette.accent}" />
