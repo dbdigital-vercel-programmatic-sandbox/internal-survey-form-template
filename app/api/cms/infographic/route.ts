@@ -630,17 +630,49 @@ function normalizeStringList(value: unknown, maxItems: number, maxLength = 240) 
 function preferAssetIds({
   current,
   uploaded,
+  linked,
   recommended,
   fallback,
   limit,
 }: {
   current: string[]
   uploaded: string[]
+   linked: string[]
   recommended: string[]
   fallback: string[]
   limit: number
 }) {
-  return Array.from(new Set([...uploaded, ...current, ...recommended, ...fallback])).slice(0, limit)
+  const ordered = Array.from(new Set([...current, ...recommended, ...uploaded, ...linked, ...fallback]))
+  const next: string[] = []
+
+  const pushIfPresent = (ids: string[]) => {
+    for (const id of ids) {
+      if (ordered.includes(id) && !next.includes(id) && next.length < limit) {
+        next.push(id)
+        break
+      }
+    }
+  }
+
+  if (uploaded.length > 0) {
+    pushIfPresent(uploaded)
+  }
+
+  if (linked.length > 0) {
+    pushIfPresent(linked)
+  }
+
+  for (const id of ordered) {
+    if (!next.includes(id)) {
+      next.push(id)
+    }
+
+    if (next.length >= limit) {
+      break
+    }
+  }
+
+  return next.slice(0, limit)
 }
 
 async function loadTemplateReferenceImages() {
@@ -761,27 +793,27 @@ function normalizeArtDirection(value: unknown, infographic: InfographicSpec): In
     visualStyle:
       typeof (value as InfographicArtDirection | undefined)?.visualStyle === "string"
         ? sanitizeText((value as InfographicArtDirection).visualStyle, 240)
-        : "Premium Hindi news explainer poster with layered editorial composition.",
+        : "Clean Hindi-first newsroom explainer with restrained editorial styling and a believable print-magazine feel.",
     composition:
       typeof (value as InfographicArtDirection | undefined)?.composition === "string"
         ? sanitizeText((value as InfographicArtDirection).composition, 320)
-        : "Large political headline, dense modular panels, strong central hierarchy, textured background, and poster-like callouts.",
+        : "Simple visual hierarchy, one dominant hero image, a few supporting modules, quiet background treatment, and clear separation between story blocks.",
     typography:
       typeof (value as InfographicArtDirection | undefined)?.typography === "string"
         ? sanitizeText((value as InfographicArtDirection).typography, 220)
-        : "Bold Devanagari-first display typography with compact supporting labels and high-contrast numeric callouts.",
+        : "Confident Devanagari-first headline typography with readable supporting labels and restrained emphasis.",
     colorDirection:
       typeof (value as InfographicArtDirection | undefined)?.colorDirection === "string"
         ? sanitizeText((value as InfographicArtDirection).colorDirection, 220)
-        : "Use warm editorial neutrals with red, saffron, and green accents while preserving readability.",
+        : "Use muted editorial neutrals and only a small amount of accent color, keeping the palette close to the source imagery when possible.",
     imagePrompt:
       typeof (value as InfographicArtDirection | undefined)?.imagePrompt === "string"
         ? sanitizeText((value as InfographicArtDirection).imagePrompt, 6000)
-        : `Create a vertical Hindi election explainer infographic poster with the headline ${infographic.title}.`,
+        : `Create a vertical Hindi news explainer layout for ${infographic.title} with a natural, grounded editorial tone.`,
     negativePrompt:
       typeof (value as InfographicArtDirection | undefined)?.negativePrompt === "string"
         ? sanitizeText((value as InfographicArtDirection).negativePrompt, 1000)
-        : "Avoid website UI chrome, low-contrast text, empty panels, generic stock illustrations, gibberish text, and weak hierarchy.",
+        : "Avoid website UI chrome, low-contrast text, empty panels, generic stock illustrations, gibberish text, overdramatic lighting, excessive textures, neon accents, and weak hierarchy.",
     mustIncludeText:
       normalizeStringList((value as InfographicArtDirection | undefined)?.mustIncludeText, 10, 120).length > 0
         ? normalizeStringList((value as InfographicArtDirection | undefined)?.mustIncludeText, 10, 120)
@@ -789,7 +821,7 @@ function normalizeArtDirection(value: unknown, infographic: InfographicSpec): In
     avoid:
       normalizeStringList((value as InfographicArtDirection | undefined)?.avoid, 10, 120).length > 0
         ? normalizeStringList((value as InfographicArtDirection | undefined)?.avoid, 10, 120)
-        : ["webpage layout", "generic dashboard cards", "tiny unreadable labels"],
+        : ["webpage layout", "generic dashboard cards", "tiny unreadable labels", "overdesigned cinematic effects", "fake stock-photo look"],
   }
 }
 
@@ -893,9 +925,9 @@ async function callFactsModel({
           "Extract only the most relevant facts, election math, geography, and narrative context from the provided source material.",
           "Return concise but publishable infographic copy in Hindi or mixed Hindi-English matching the user request.",
           "Do not design a website. Plan an editorial vertical poster infographic.",
-          "Prefer dense but readable modules, not sparse marketing copy.",
+          "Prefer clear, grounded modules, not sparse marketing copy or hyper-stylized poster theatrics.",
           "When visuals are available, treat uploaded images as primary references and article images as secondary support.",
-          "Choose the layout and asset ids so the strongest available visuals are used prominently instead of being ignored.",
+          "When both uploaded and article images exist, choose the layout and asset ids so both are visibly represented instead of collapsing to only one source.",
           "Do not keep reusing the same generic warm-red palette unless the subject matter and visuals clearly justify it.",
           mode === "refinement"
             ? "Respect the prior direction from the conversation when revising the facts plan."
@@ -919,6 +951,7 @@ async function callFactsModel({
               "Title should be strong and editorial. Subtitle should add context. Stats and sections may be denser than a simple social card if the story demands it.",
               "Set the palette from the story mood and the visible cues in the provided images when possible.",
               "If good photos are available and the story is not overwhelmingly data-heavy, prefer an image-led composition.",
+              "If uploaded images and scraped article images are both available, explicitly recommend assets from both sets.",
               "Avoid fluff, repetition, weak hedging, and generic poster language.",
             ].join("\n\n"),
           },
@@ -963,10 +996,11 @@ async function callArtDirectionModel({
           "You are an art director for premium Hindi-first newsroom explainers.",
           "Your output will drive a final image model, so write a highly specific prompt for a single vertical editorial infographic image.",
           "The image must feel like a finished poster, not a web page, dashboard, or slide deck.",
-          "Push for layered composition, dense but legible hierarchy, textured backgrounds, infographic modules, badges, callouts, maps, icons, silhouettes, and editorial polish when relevant.",
+          "Keep the styling grounded and believable: calm composition, restrained textures, modest accent usage, and clear hierarchy without theatrical excess.",
           "Preserve factual text from the infographic plan. Avoid inventing numbers or districts.",
           "Reference samples are only style guidance; never copy their content or logos.",
           "Uploaded images are the primary visual anchors. Article images are supporting references.",
+          "When both uploaded and article images are available, the composition must visibly use both, with uploaded imagery leading and article imagery reinforcing context.",
           "Derive the palette from the subject matter and the actual hues, lighting, and emotional tone visible in the supplied images when they are available.",
           "Avoid defaulting every story to the same red-beige editorial look.",
         ].join(" "),
@@ -989,8 +1023,9 @@ async function callArtDirectionModel({
               sources.length > 0 ? `Source context:\n${sourceSummary}` : "No source context was available.",
               assets.length > 0 ? `Available visuals:\n${assetSummary}` : "No visuals were available.",
               `Style-only template references:\n${templateSummary}`,
-              "Write the image prompt so the model renders a complete, publication-ready infographic poster with readable Hindi-first typography, strong headline treatment, and distinct information zones.",
+              "Write the image prompt so the model renders a complete, publication-ready infographic poster with readable Hindi-first typography, distinct information zones, and a more natural editorial finish.",
               "If source or uploaded photos are available, explicitly place them as hero/supporting imagery rather than replacing them with generic stock-style substitutes.",
+              "Do not overdesign the page with dramatic glows, intense texture, extreme contrast, or flashy decorative elements.",
               "Explicitly avoid a browser screenshot, SaaS dashboard, wireframe, or web card grid aesthetic.",
             ].join("\n\n"),
           },
@@ -1070,13 +1105,36 @@ function pickReferenceAssets(infographic: InfographicSpec, assets: VisualAsset[]
     ...infographic.heroAssetIds,
     ...infographic.stripAssetIds,
     ...assets.filter((asset) => asset.source === "upload").map((asset) => asset.id),
+    ...assets.filter((asset) => asset.source === "link").map((asset) => asset.id),
     ...assets.map((asset) => asset.id),
   ]
 
-  return Array.from(new Set(orderedIds))
+  const orderedAssets = Array.from(new Set(orderedIds))
     .map((id) => assetMap.get(id))
     .filter((asset): asset is VisualAsset => Boolean(asset))
-    .slice(0, 4)
+
+  const picked: VisualAsset[] = []
+  const pushFirstOfSource = (source: VisualAsset["source"]) => {
+    const match = orderedAssets.find((asset) => asset.source === source && !picked.some((item) => item.id === asset.id))
+    if (match) {
+      picked.push(match)
+    }
+  }
+
+  pushFirstOfSource("upload")
+  pushFirstOfSource("link")
+
+  for (const asset of orderedAssets) {
+    if (!picked.some((item) => item.id === asset.id)) {
+      picked.push(asset)
+    }
+
+    if (picked.length >= 4) {
+      break
+    }
+  }
+
+  return picked.slice(0, 4)
 }
 
 async function requestRenderedImage({
@@ -1337,12 +1395,14 @@ export async function POST(request: Request) {
 
     const assetIds = assets.map((asset) => asset.id)
     const uploadedAssetIds = uploadedAssets.map((asset) => asset.id)
+    const linkedAssetIds = linkAssets.map((asset) => asset.id)
     const recommendedAssets = normalizeStringList(factsResult.recommendedAssets, 6).filter((id) => assetIds.includes(id))
     const infographic = normalizeInfographic(factsResult.infographic, assetIds, fallbackPalette)
 
     infographic.heroAssetIds = preferAssetIds({
       current: infographic.heroAssetIds,
       uploaded: uploadedAssetIds,
+      linked: linkedAssetIds,
       recommended: recommendedAssets,
       fallback: assetIds,
       limit: 3,
@@ -1351,6 +1411,7 @@ export async function POST(request: Request) {
     infographic.stripAssetIds = preferAssetIds({
       current: infographic.stripAssetIds,
       uploaded: uploadedAssetIds,
+      linked: linkedAssetIds,
       recommended: recommendedAssets,
       fallback: assetIds,
       limit: 6,

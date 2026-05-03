@@ -140,36 +140,36 @@ function renderBackdrop(spec: InfographicSpec) {
     <defs>
       <linearGradient id="paperGlow" x1="0" y1="0" x2="1" y2="1">
         <stop offset="0%" stop-color="${spec.palette.background}" />
-        <stop offset="100%" stop-color="#f9f2e7" />
+        <stop offset="100%" stop-color="${spec.palette.surface}" />
       </linearGradient>
       <radialGradient id="accentHalo" cx="50%" cy="18%" r="70%">
-        <stop offset="0%" stop-color="${spec.palette.accent}" stop-opacity="0.16" />
+        <stop offset="0%" stop-color="${spec.palette.accent}" stop-opacity="0.07" />
         <stop offset="100%" stop-color="${spec.palette.accent}" stop-opacity="0" />
       </radialGradient>
       <filter id="panelShadow" x="-20%" y="-20%" width="140%" height="160%">
-        <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#000000" flood-opacity="0.12" />
+        <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000000" flood-opacity="0.08" />
       </filter>
       <pattern id="dotField" x="0" y="0" width="22" height="22" patternUnits="userSpaceOnUse">
-        <circle cx="2" cy="2" r="1.4" fill="${spec.palette.accent}" fill-opacity="0.08" />
+        <circle cx="2" cy="2" r="1.2" fill="${spec.palette.accent}" fill-opacity="0.04" />
       </pattern>
     </defs>
     <rect width="1080" height="1600" fill="url(#paperGlow)" />
     <rect width="1080" height="1600" fill="url(#accentHalo)" />
-    <rect x="38" y="38" width="1004" height="1524" rx="40" fill="url(#dotField)" opacity="0.55" />
+    <rect x="38" y="38" width="1004" height="1524" rx="40" fill="url(#dotField)" opacity="0.34" />
   `.trim()
 }
 
 function renderKicker(text: string, palette: InfographicSpec["palette"]) {
   const lines = clampLines(wrapText(text, 260, 24, 800, DISPLAY_FONT_STACK), 2)
   return [
-    `<rect x="54" y="42" width="308" height="60" rx="20" fill="${palette.accent}" filter="url(#panelShadow)" />`,
+    `<rect x="54" y="42" width="308" height="60" rx="20" fill="#ffffff" stroke="${palette.accent}" stroke-opacity="0.2" filter="url(#panelShadow)" />`,
     renderTextLines({
       lines,
       x: 86,
       y: 80,
       fontSize: 24,
       lineHeight: 26,
-      color: "#ffffff",
+      color: palette.accent,
       weight: 800,
       fontFamily: DISPLAY_FONT_STACK,
     }),
@@ -417,14 +417,14 @@ function renderColumnSections({
 
 function renderTakeawayBand(spec: InfographicSpec, y: number, height: number) {
   return [
-    `<rect x="54" y="${y}" width="972" height="${height}" rx="28" fill="${spec.palette.accent}" filter="url(#panelShadow)" />`,
+    `<rect x="54" y="${y}" width="972" height="${height}" rx="28" fill="#ffffff" stroke="${spec.palette.accent}" stroke-opacity="0.22" filter="url(#panelShadow)" />`,
     renderTextLines({
       lines: clampLines(wrapText(spec.takeaway, 914, 30, 800, DISPLAY_FONT_STACK), 2),
       x: 88,
       y: y + 64,
       fontSize: 30,
       lineHeight: 36,
-      color: "#ffffff",
+      color: spec.palette.text,
       weight: 800,
       fontFamily: DISPLAY_FONT_STACK,
     }),
@@ -941,7 +941,7 @@ export default function CmsPage() {
   }
 
   return (
-    <div className="min-h-full bg-[radial-gradient(circle_at_top,_rgba(157,28,31,0.12),_transparent_38%),linear-gradient(180deg,_rgba(248,244,236,0.9),_rgba(255,255,255,1))] p-6">
+    <div className="min-h-full bg-[linear-gradient(180deg,_rgba(250,248,244,0.96),_rgba(255,255,255,1))] p-6">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-6">
         <div className="grid gap-4 xl:grid-cols-[minmax(0,0.95fr)_minmax(420px,1.05fr)]">
           <Card className="border-zinc-200/70 bg-white/90 shadow-sm backdrop-blur dark:bg-zinc-950/70">
