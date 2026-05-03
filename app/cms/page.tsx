@@ -31,6 +31,7 @@ import {
   type UploadedAsset,
   type VisualAsset,
 } from "@/lib/cms/infographic"
+import { buildInfographicSvg as buildSharedInfographicSvg } from "@/lib/cms/render-svg"
 
 const MAX_ATTACHMENTS = 4
 const CANVAS_WIDTH = 1080
@@ -845,7 +846,7 @@ export default function CmsPage() {
   const [error, setError] = useState<string | null>(null)
   const [editingSourcePack, setEditingSourcePack] = useState(false)
 
-  const svg = result ? buildInfographicSvg(result.infographic, result.assets) : null
+  const svg = result ? buildSharedInfographicSvg(result.infographic, result.assets) : null
   const svgPreview = svg ? `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}` : null
   const finalImageDataUrl = result?.finalImage.dataUrl ?? null
   const previewImage = finalImageDataUrl ?? svgPreview

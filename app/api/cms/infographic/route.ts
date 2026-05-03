@@ -19,6 +19,7 @@ import {
   INFOGRAPHIC_TEMPLATE_REFERENCES,
   buildTemplateReferenceSummary,
 } from "@/lib/cms/templates"
+import { buildInfographicSvgDataUrl } from "@/lib/cms/render-svg"
 
 const CHAT_API_URL = "https://ai-gateway.vercel.sh/v1/chat/completions"
 const IMAGE_API_URL = "https://ai-gateway.vercel.sh/v1/images/generations"
@@ -255,6 +256,21 @@ const QA_SCHEMA = {
   },
 } as const
 
+const ASSET_USAGE_SCHEMA = {
+  name: "infographic_asset_usage",
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      usesUploadedImage: { type: "boolean" },
+      usesArticleImage: { type: "boolean" },
+      shouldFallbackToDeterministicRender: { type: "boolean" },
+      summary: { type: "string" },
+    },
+    required: ["usesUploadedImage", "usesArticleImage", "shouldFallbackToDeterministicRender", "summary"],
+  },
+} as const
+
 type RequestBody = {
   prompt: string
   mode?: "setup" | "refinement"
@@ -292,6 +308,13 @@ type ChatCompletionPayload<T> = {
     }
   }>
 } & T
+
+type AssetUsageResult = {
+  usesUploadedImage?: unknown
+  usesArticleImage?: unknown
+  shouldFallbackToDeterministicRender?: unknown
+  summary?: unknown
+}
 
 function normalizeMediaType(value: string) {
   return value.split(";")[0]?.trim().toLowerCase() ?? ""
@@ -394,7 +417,11 @@ function extractImageUrls(html: string, pageUrl: string) {
   const patterns = [
     /<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image|og:image:url)["'][^>]+content=["']([^"']+)["']/gi,
     /<img[^>]+src=["']([^"']+)["']/gi,
+    /<img[^>]+data-src=["']([^"']+)["']/gi,
+    /<img[^>]+data-lazy-src=["']([^"']+)["']/gi,
+    /<img[^>]+data-original=["']([^"']+)["']/gi,
     /<source[^>]+srcset=["']([^"']+)["']/gi,
+    /<source[^>]+data-srcset=["']([^"']+)["']/gi,
     /["'](https?:\/\/[^"']+\.(?:png|jpe?g|webp|gif))["']/gi,
   ]
 
@@ -1320,6 +1347,114 @@ async function callQaModel({
   })
 }
 
+function normalizeAssetUsage(value: AssetUsageResult, hasUploads: boolean, hasArticleImages: boolean) {
+  const usesUploadedImage = Boolean(value.usesUploadedImage)
+  const usesArticleImage = Boolean(value.usesArticleImage)
+  const shouldFallback = Boolean(value.shouldFallbackToDeterministicRender)
+  const summary = typeof value.summary === "string" ? sanitizeText(value.summary, 240) : "Asset usage QA did not return a summary."
+
+  return {
+    usesUploadedImage,
+    usesArticleImage,
+    shouldFallbackToDeterministicRender:
+      shouldFallback || (hasUploads && !usesUploadedImage) || (hasArticleImages && !usesArticleImage),
+    summary,
+  }
+}
+
+async function callAssetUsageModel({
+  infographic,
+  finalImage,
+  assets,
+}: {
+  infographic: InfographicSpec
+  finalImage: GeneratedInfographicImage
+  assets: VisualAsset[]
+}) {
+  const uploadedAssets = assets.filter((asset) => asset.source === "upload").slice(0, 2)
+  const articleAssets = assets.filter((asset) => asset.source === "link").slice(0, 2)
+
+  if (!finalImage.dataUrl || (uploadedAssets.length === 0 && articleAssets.length === 0)) {
+    return {
+      usesUploadedImage: uploadedAssets.length === 0,
+      usesArticleImage: articleAssets.length === 0,
+      shouldFallbackToDeterministicRender: false,
+      summary: "No multimodal asset-usage check was required.",
+    }
+  }
+
+  return callChatJson<AssetUsageResult>({
+    model: QA_MODEL_ID,
+    schema: ASSET_USAGE_SCHEMA,
+    messages: [
+      {
+        role: "system",
+        content: [
+          "You are checking whether a generated infographic visibly uses supplied reference images.",
+          "Treat direct recognizable reuse of the supplied image content as required, not optional inspiration.",
+          "If the output replaces the reference with a generic substitute, say it is not used.",
+          "If any required source set is missing, request deterministic fallback.",
+        ].join(" "),
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: [
+              `Title: ${infographic.title}`,
+              `Uploaded reference count: ${uploadedAssets.length}`,
+              `Article reference count: ${articleAssets.length}`,
+              "Judge whether the final infographic visibly contains the uploaded references and article references.",
+              "Return fallback=true if the output does not clearly use the required imagery.",
+            ].join("\n\n"),
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: finalImage.dataUrl,
+            },
+          },
+          ...uploadedAssets.map((asset) => ({
+            type: "image_url",
+            image_url: {
+              url: asset.dataUrl,
+            },
+          })),
+          ...articleAssets.map((asset) => ({
+            type: "image_url",
+            image_url: {
+              url: asset.dataUrl,
+            },
+          })),
+        ],
+      },
+    ],
+  })
+}
+
+function buildDeterministicImage({
+  infographic,
+  assets,
+  prompt,
+  reason,
+}: {
+  infographic: InfographicSpec
+  assets: VisualAsset[]
+  prompt: string
+  reason: string
+}): GeneratedInfographicImage {
+  return {
+    status: "generated",
+    model: "deterministic-svg",
+    dataUrl: buildInfographicSvgDataUrl(infographic, assets),
+    mimeType: "image/svg+xml",
+    prompt,
+    revisedPrompt: null,
+    error: reason,
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as RequestBody
@@ -1428,19 +1563,36 @@ export async function POST(request: Request) {
       }),
       infographic
     )
-    const finalImage = await generateFinalImage({ infographic, facts, artDirection, assets })
+    let finalImage = await generateFinalImage({ infographic, facts, artDirection, assets })
+    let renderMode: InfographicResponse["renderMode"] = "model-image"
 
     if (finalImage.status !== "generated" || !finalImage.dataUrl) {
-      return NextResponse.json(
-        {
-          error: `Final image generation failed: ${finalImage.error ?? "no image was returned by the model."}`,
-        },
-        { status: 502 }
+      finalImage = buildDeterministicImage({
+        infographic,
+        assets,
+        prompt: finalImage.prompt,
+        reason: `Model render failed, using deterministic asset-composited render. ${finalImage.error ?? ""}`.trim(),
+      })
+      renderMode = "deterministic-svg"
+    } else {
+      const assetUsage = normalizeAssetUsage(
+        await callAssetUsageModel({ infographic, finalImage, assets }),
+        uploadedAssets.length > 0,
+        linkAssets.length > 0
       )
+
+      if (assetUsage.shouldFallbackToDeterministicRender) {
+        finalImage = buildDeterministicImage({
+          infographic,
+          assets,
+          prompt: finalImage.revisedPrompt ?? finalImage.prompt,
+          reason: `Asset enforcement fallback: ${assetUsage.summary}`,
+        })
+        renderMode = "deterministic-svg"
+      }
     }
 
     const qa = normalizeQa(await callQaModel({ infographic, facts, artDirection, finalImage }))
-    const renderMode = "model-image"
 
     const assistantMessageSource =
       typeof factsResult.assistantMessage === "string"

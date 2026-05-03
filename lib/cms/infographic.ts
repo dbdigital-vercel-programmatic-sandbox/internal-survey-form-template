@@ -109,7 +109,7 @@ export type InfographicResponse = {
   artDirection: InfographicArtDirection
   qa: InfographicQa
   finalImage: GeneratedInfographicImage
-  renderMode: "model-image" | "svg-fallback"
+  renderMode: "model-image" | "deterministic-svg"
   extractedSources: ExtractedSource[]
   assets: VisualAsset[]
 }
