@@ -231,13 +231,20 @@ function pickAssets(spec: InfographicSpec, assets: VisualAsset[]) {
   return { hero, support }
 }
 
-export function buildInfographicSvg(spec: InfographicSpec, assets: VisualAsset[]) {
+export function buildInfographicSvg(
+  spec: InfographicSpec,
+  assets: VisualAsset[],
+  options?: {
+    backdropImageDataUrl?: string | null
+  }
+) {
   const { hero, support } = pickAssets(spec, assets)
   const titleLines = clampLines(wrapText(spec.title, 360, 50), 4)
   const subtitleLines = clampLines(wrapText(spec.subtitle, 360, 22), 5)
   const statGrid = renderStatCards(spec, 668)
   const sections = renderSections(spec, 668 + statGrid.height + (statGrid.height > 0 ? 28 : 0))
   const takeawayY = 668 + statGrid.height + sections.height + (sections.height > 0 ? 54 : 0)
+  const backdropImageDataUrl = options?.backdropImageDataUrl ?? null
 
   return `
     <svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS_WIDTH}" height="${CANVAS_HEIGHT}" viewBox="0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}">
@@ -246,12 +253,18 @@ export function buildInfographicSvg(spec: InfographicSpec, assets: VisualAsset[]
           <stop offset="0%" stop-color="${spec.palette.background}" />
           <stop offset="100%" stop-color="${spec.palette.surface}" />
         </linearGradient>
+        <linearGradient id="panelShade" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="#ffffff" stop-opacity="0.96" />
+          <stop offset="100%" stop-color="#ffffff" stop-opacity="0.9" />
+        </linearGradient>
       </defs>
       <rect width="1080" height="1600" fill="url(#paper)" />
+      ${backdropImageDataUrl ? `<image href="${backdropImageDataUrl}" x="0" y="0" width="1080" height="1600" preserveAspectRatio="xMidYMid slice" opacity="0.42" />` : ""}
+      <rect width="1080" height="1600" fill="#0f172a" fill-opacity="0.18" />
       <rect x="54" y="44" width="220" height="46" rx="16" fill="#ffffff" stroke="${spec.palette.accent}" stroke-opacity="0.2" />
       <text x="78" y="73" fill="${spec.palette.accent}" font-size="22" font-weight="800" font-family="${DISPLAY_FONT_STACK}">${escapeXml(getStoryBriefLabel(spec.contentLanguage))}</text>
 
-      <rect x="54" y="116" width="394" height="520" rx="28" fill="#ffffff" stroke="${spec.palette.accent}" stroke-opacity="0.14" />
+      <rect x="54" y="116" width="394" height="520" rx="28" fill="url(#panelShade)" stroke="${spec.palette.accent}" stroke-opacity="0.18" />
       <rect x="54" y="116" width="394" height="10" rx="28" fill="${spec.palette.accent}" />
       ${renderTextLines({ lines: titleLines, x: 84, y: 196, fontSize: 50, lineHeight: 56, color: spec.palette.text, weight: 900, fontFamily: DISPLAY_FONT_STACK })}
       ${renderTextLines({ lines: subtitleLines, x: 84, y: 438, fontSize: 22, lineHeight: 28, color: spec.palette.muted, weight: 600 })}
@@ -265,7 +278,7 @@ export function buildInfographicSvg(spec: InfographicSpec, assets: VisualAsset[]
       ${statGrid.markup}
       ${sections.markup}
 
-      <rect x="54" y="${Math.min(1458, takeawayY)}" width="972" height="96" rx="24" fill="#ffffff" stroke="${spec.palette.accent}" stroke-opacity="0.18" />
+      <rect x="54" y="${Math.min(1458, takeawayY)}" width="972" height="96" rx="24" fill="url(#panelShade)" stroke="${spec.palette.accent}" stroke-opacity="0.2" />
       ${renderTextLines({
         lines: clampLines(wrapText(spec.takeaway, 920, 28), 2),
         x: 82,
@@ -283,5 +296,14 @@ export function buildInfographicSvg(spec: InfographicSpec, assets: VisualAsset[]
 
 export function buildInfographicSvgDataUrl(spec: InfographicSpec, assets: VisualAsset[]) {
   const svg = buildInfographicSvg(spec, assets)
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+}
+
+export function buildHybridInfographicSvgDataUrl(
+  spec: InfographicSpec,
+  assets: VisualAsset[],
+  backdropImageDataUrl: string | null
+) {
+  const svg = buildInfographicSvg(spec, assets, { backdropImageDataUrl })
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
 }

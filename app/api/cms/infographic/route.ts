@@ -20,7 +20,7 @@ import {
   INFOGRAPHIC_TEMPLATE_REFERENCES,
   buildTemplateReferenceSummary,
 } from "@/lib/cms/templates"
-import { buildInfographicSvgDataUrl } from "@/lib/cms/render-svg"
+import { buildHybridInfographicSvgDataUrl, buildInfographicSvgDataUrl } from "@/lib/cms/render-svg"
 
 const CHAT_API_URL = "https://ai-gateway.vercel.sh/v1/chat/completions"
 const IMAGE_API_URL = "https://ai-gateway.vercel.sh/v1/images/generations"
@@ -1354,6 +1354,49 @@ async function generateFinalImage({
   }
 }
 
+function buildBackdropOnlyPrompt({
+  infographic,
+  artDirection,
+}: {
+  infographic: InfographicSpec
+  artDirection: InfographicArtDirection
+}) {
+  return [
+    `Create a vertical editorial infographic backdrop for ${infographic.title}.`,
+    "This is a background/base-layer only, not a finished infographic.",
+    "Do not include people, faces, athletes, products, article photos, logos, badges, team crests, screenshots, or any readable text.",
+    "Do not include stat cards, labels, icons, maps, or literal UI panels that compete with later overlays.",
+    `Visual style: ${artDirection.visualStyle}`,
+    `Color direction: ${artDirection.colorDirection}`,
+    "Use subtle editorial atmosphere, restrained gradients, soft texture, and publication-quality depth.",
+    "Keep the center and left reading areas relatively calm so overlaid typography remains readable.",
+    "The result should feel premium and designed, but quiet enough to serve as a compositing base.",
+  ].join("\n\n")
+}
+
+async function generateHybridBackdrop({
+  infographic,
+  artDirection,
+}: {
+  infographic: InfographicSpec
+  artDirection: InfographicArtDirection
+}) {
+  try {
+    const generatedImage = await requestRenderedImage({
+      url: IMAGE_API_URL,
+      body: JSON.stringify({
+        model: IMAGE_MODEL_ID,
+        prompt: buildBackdropOnlyPrompt({ infographic, artDirection }),
+        size: "1024x1536",
+      }),
+    })
+
+    return generatedImage.dataUrl
+  } catch {
+    return null
+  }
+}
+
 async function callQaModel({
   infographic,
   facts,
@@ -1503,16 +1546,22 @@ function buildDeterministicImage({
   assets,
   prompt,
   reason,
+  backdropImageDataUrl = null,
+  model = "deterministic-svg",
 }: {
   infographic: InfographicSpec
   assets: VisualAsset[]
   prompt: string
   reason: string
+  backdropImageDataUrl?: string | null
+  model?: string
 }): GeneratedInfographicImage {
   return {
     status: "generated",
-    model: "deterministic-svg",
-    dataUrl: buildInfographicSvgDataUrl(infographic, assets),
+    model,
+    dataUrl: backdropImageDataUrl
+      ? buildHybridInfographicSvgDataUrl(infographic, assets, backdropImageDataUrl)
+      : buildInfographicSvgDataUrl(infographic, assets),
     mimeType: "image/svg+xml",
     prompt,
     revisedPrompt: null,
@@ -1634,15 +1683,24 @@ export async function POST(request: Request) {
       infographic
     )
     const shouldForceDeterministicRender = assets.length > 0
+    const hybridBackdrop = shouldForceDeterministicRender ? await generateHybridBackdrop({ infographic, artDirection }) : null
     let finalImage = shouldForceDeterministicRender
       ? buildDeterministicImage({
           infographic,
           assets,
           prompt: buildFinalImagePrompt({ infographic, facts, artDirection, assets }),
-          reason: "Using deterministic asset-composited render because source images were provided and must appear directly in the final output.",
+          reason: hybridBackdrop
+            ? "Using hybrid asset-composited render with AI-styled backdrop because source images must appear directly in the final output."
+            : "Using deterministic asset-composited render because source images must appear directly in the final output.",
+          backdropImageDataUrl: hybridBackdrop,
+          model: hybridBackdrop ? `${IMAGE_MODEL_ID}+deterministic-svg` : "deterministic-svg",
         })
       : await generateFinalImage({ infographic, facts, artDirection, assets })
-    let renderMode: InfographicResponse["renderMode"] = shouldForceDeterministicRender ? "deterministic-svg" : "model-image"
+    let renderMode: InfographicResponse["renderMode"] = shouldForceDeterministicRender
+      ? hybridBackdrop
+        ? "hybrid-svg"
+        : "deterministic-svg"
+      : "model-image"
 
     if (!shouldForceDeterministicRender && (finalImage.status !== "generated" || !finalImage.dataUrl)) {
       finalImage = buildDeterministicImage({
