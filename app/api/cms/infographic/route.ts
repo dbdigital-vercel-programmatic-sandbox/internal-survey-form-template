@@ -335,6 +335,14 @@ function getDataUrlMediaType(value: string) {
   return normalizeMediaType(match?.[1] ?? "")
 }
 
+function isModelReadableDataUrlImage(value: string | null) {
+  if (!value) {
+    return false
+  }
+
+  return SUPPORTED_MODEL_IMAGE_TYPES.has(getDataUrlMediaType(value))
+}
+
 function fileExtensionToMediaType(filePath: string) {
   const extension = path.extname(filePath).toLowerCase()
   if (extension === ".png") return "image/png"
@@ -1388,7 +1396,7 @@ async function callQaModel({
               `Prompt used:\n${finalImage.revisedPrompt ?? finalImage.prompt}`,
             ].join("\n\n"),
           },
-          ...(finalImage.dataUrl
+          ...(isModelReadableDataUrlImage(finalImage.dataUrl)
             ? [
                 {
                   type: "image_url",
