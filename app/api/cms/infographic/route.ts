@@ -30,7 +30,7 @@ const ART_DIRECTION_MODEL_ID = process.env.CMS_INFOGRAPHIC_ART_MODEL ?? "openai/
 const QA_MODEL_ID = process.env.CMS_INFOGRAPHIC_QA_MODEL ?? "openai/gpt-5.3-chat"
 const IMAGE_MODEL_ID = process.env.CMS_INFOGRAPHIC_IMAGE_MODEL ?? "openai/gpt-image-2"
 const MAX_HISTORY_MESSAGES = 8
-const MAX_SOURCE_IMAGES = 6
+const MAX_SOURCE_IMAGES = 18
 const MAX_MEDIA_FOR_MODEL = 6
 const MAX_IMAGE_BYTES = 6 * 1024 * 1024
 const SUPPORTED_MODEL_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"])
@@ -309,6 +309,25 @@ const POSTER_REVIEW_SCHEMA = {
   },
 } as const
 
+const IDENTITY_REVIEW_SCHEMA = {
+  name: "identity_review",
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      approved: { type: "boolean" },
+      preservesPrimaryIdentity: { type: "boolean" },
+      preservesSupportingIdentity: { type: "boolean" },
+      summary: { type: "string" },
+      issues: {
+        type: "array",
+        items: { type: "string" },
+      },
+    },
+    required: ["approved", "preservesPrimaryIdentity", "preservesSupportingIdentity", "summary", "issues"],
+  },
+} as const
+
 type RequestBody = {
   prompt: string
   mode?: "setup" | "refinement"
@@ -359,6 +378,14 @@ type WebsiteImageAnalysisResult = {
   confidence?: unknown
   role?: unknown
   summary?: unknown
+}
+
+type IdentityReviewResult = {
+  approved?: unknown
+  preservesPrimaryIdentity?: unknown
+  preservesSupportingIdentity?: unknown
+  summary?: unknown
+  issues?: unknown
 }
 
 function normalizeMediaType(value: string) {
@@ -873,6 +900,18 @@ function buildAssetSummary(assets: VisualAsset[]) {
     .join("\n")
 }
 
+function buildReferenceRoleSummary(infographic: InfographicSpec, assets: VisualAsset[]) {
+  const references = pickReferenceAssets(infographic, assets)
+
+  return references
+    .map((asset, index) => {
+      const role = index === 0 ? "primary identity anchor" : index === 1 ? "secondary supporting identity" : "context support"
+      const dimensions = asset.width && asset.height ? ` | ${asset.width}x${asset.height}` : ""
+      return `- ${asset.id}: ${role} | ${asset.source} | ${asset.title}${dimensions}${asset.originUrl ? ` | ${asset.originUrl}` : ""}`
+    })
+    .join("\n")
+}
+
 function buildSourceSummary(sources: ExtractedSource[]) {
   return sources
     .map((source) =>
@@ -1114,6 +1153,7 @@ async function callArtDirectionModel({
   const templateImages = await loadTemplateReferenceImages()
   const sourceSummary = buildSourceSummary(sources)
   const assetSummary = buildAssetSummary(assets)
+  const referenceRoleSummary = buildReferenceRoleSummary(infographic, assets)
   const visualAssets = assets.slice(0, Math.min(4, MAX_MEDIA_FOR_MODEL))
 
   return callChatJson<InfographicArtDirection>({
@@ -1131,6 +1171,8 @@ async function callArtDirectionModel({
           "Reference samples are only style guidance; never copy their content or logos.",
           "Uploaded images are the primary visual anchors. Article images are supporting references.",
           "When both uploaded and article images are available, the composition must visibly use both, with uploaded imagery leading and article imagery reinforcing context.",
+          "Treat the strongest supplied image as a subject-identity anchor: preserve the recognizable person, object, or scene from that image while redesigning the surrounding poster composition.",
+          "Do not replace the supplied subject with a generic stock substitute, unrelated athlete, different object, or unrelated setting.",
           "Derive the palette from the subject matter and the actual hues, lighting, and emotional tone visible in the supplied images when they are available.",
           "Avoid defaulting every story to the same red-beige editorial look.",
         ].join(" "),
@@ -1153,9 +1195,12 @@ async function callArtDirectionModel({
                 : "No structured facts were available.",
               sources.length > 0 ? `Source context:\n${sourceSummary}` : "No source context was available.",
               assets.length > 0 ? `Available visuals:\n${assetSummary}` : "No visuals were available.",
+              referenceRoleSummary ? `Reference roles to preserve:\n${referenceRoleSummary}` : "",
               `Style-only template references:\n${templateSummary}`,
               `Write the image prompt so the model renders a complete, publication-ready infographic poster with readable ${describeLanguage(preferredLanguage)} typography, distinct information zones, and a more natural editorial finish.`,
               "If source or uploaded photos are available, explicitly place them as hero/supporting imagery rather than replacing them with generic stock-style substitutes.",
+              "Preserve subject identity from the primary anchor image and redesign only the surrounding crop, lighting, framing, background, and infographic structure.",
+              "Create clean text-safe areas around the preserved subject instead of covering or deleting it.",
               "Do not overdesign the page with dramatic glows, intense texture, extreme contrast, or flashy decorative elements.",
               "Explicitly avoid a browser screenshot, SaaS dashboard, wireframe, or web card grid aesthetic.",
             ].join("\n\n"),
@@ -1195,9 +1240,7 @@ function buildFinalImagePrompt({
   )
     .slice(0, 8)
     .join("\n")
-  const referenceAssets = pickReferenceAssets(infographic, assets)
-    .map((asset) => `- ${asset.id}: ${asset.title} (${asset.source === "upload" ? "uploaded primary reference" : "article reference"})`)
-    .join("\n")
+  const referenceRoleSummary = buildReferenceRoleSummary(infographic, assets)
 
   return [
     artDirection.imagePrompt,
@@ -1206,9 +1249,14 @@ function buildFinalImagePrompt({
     `Typography: ${artDirection.typography}`,
     `Color direction: ${artDirection.colorDirection}`,
     `Canvas: single vertical infographic poster, 1024x1536, full-bleed, print-ready visual polish.`,
-    referenceAssets
-      ? `Reference imagery to integrate directly into the composition as real visual anchors, preserving subject identity, scene cues, and color relationships instead of inventing substitutes:\n${referenceAssets}`
+    referenceRoleSummary
+      ? `Reference imagery roles:\n${referenceRoleSummary}`
       : "",
+    "Use the primary identity anchor as the subject foundation for the poster. Preserve the recognizable person, object, uniform, pose, and scene cues from that supplied image.",
+    "You may redesign the surrounding composition, lighting, background, crop, textures, borders, and infographic modules, but do not replace the primary subject with a generic substitute.",
+    "Supporting references may inform secondary faces, context, venue, or match atmosphere, but should not overpower the primary identity anchor.",
+    "Extract the needed visual essence from the supplied pixels and restage it in a cleaner editorial composition when necessary, while keeping the subject clearly recognizable.",
+    "Create strong negative space and typography-safe zones around the preserved subject rather than letting text collide with it.",
     `Required headline and text elements to appear cleanly and prominently:\n${requiredText}`,
     factLines ? `Facts to visually encode through boxes, labels, maps, callouts, seals, arrows, charts, or modular sections:\n${factLines}` : "",
     `Negative constraints: ${artDirection.negativePrompt}`,
@@ -1447,13 +1495,15 @@ async function generateFinalImage({
   facts,
   artDirection,
   assets,
+  promptOverride,
 }: {
   infographic: InfographicSpec
   facts: InfographicFact[]
   artDirection: InfographicArtDirection
   assets: VisualAsset[]
+  promptOverride?: string
 }): Promise<GeneratedInfographicImage> {
-  const prompt = buildFinalImagePrompt({ infographic, facts, artDirection, assets })
+  const prompt = promptOverride ?? buildFinalImagePrompt({ infographic, facts, artDirection, assets })
   const referenceAssets = pickReferenceAssets(infographic, assets)
   const errors: string[] = []
 
@@ -1761,6 +1811,86 @@ async function callAssetUsageModel({
   })
 }
 
+function normalizeIdentityReview(value: IdentityReviewResult, hasSupportingIdentity: boolean) {
+  const approved = Boolean(value.approved)
+  const preservesPrimaryIdentity = Boolean(value.preservesPrimaryIdentity)
+  const preservesSupportingIdentity = hasSupportingIdentity ? Boolean(value.preservesSupportingIdentity) : true
+  const summary = typeof value.summary === "string" ? sanitizeText(value.summary, 240) : "Identity review did not return a summary."
+  const issues = normalizeStringList(value.issues, 8, 200)
+
+  return {
+    approved: approved && preservesPrimaryIdentity && preservesSupportingIdentity,
+    preservesPrimaryIdentity,
+    preservesSupportingIdentity,
+    summary,
+    issues,
+  }
+}
+
+async function callIdentityReviewModel({
+  infographic,
+  finalImage,
+  assets,
+}: {
+  infographic: InfographicSpec
+  finalImage: GeneratedInfographicImage
+  assets: VisualAsset[]
+}) {
+  const references = pickReferenceAssets(infographic, assets)
+  const hasSupportingIdentity = references.length > 1
+
+  if (!finalImage.dataUrl || !isModelReadableDataUrlImage(finalImage.dataUrl) || references.length === 0) {
+    return {
+      approved: references.length === 0,
+      preservesPrimaryIdentity: references.length === 0,
+      preservesSupportingIdentity: !hasSupportingIdentity,
+      summary: "No identity review was required.",
+      issues: [],
+    }
+  }
+
+  return callChatJson<IdentityReviewResult>({
+    model: QA_MODEL_ID,
+    schema: IDENTITY_REVIEW_SCHEMA,
+    messages: [
+      {
+        role: "system",
+        content: [
+          "You are checking whether a generated infographic preserved subject identity from supplied reference images while redesigning the rest of the poster.",
+          "Primary identity preservation is mandatory.",
+          "If the main person, object, scene, or visual anchor was replaced by a generic substitute, reject it.",
+          "Allow editorial restaging, background changes, lighting changes, and composition redesign only if the subject remains clearly recognizable.",
+        ].join(" "),
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: [
+              `Title: ${infographic.title}`,
+              `Reference roles:\n${buildReferenceRoleSummary(infographic, assets)}`,
+              "Judge whether the final image preserves the main subject identity from the primary anchor and, when applicable, supporting subject/context identity from secondary references.",
+            ].join("\n\n"),
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: finalImage.dataUrl,
+            },
+          },
+          ...references.slice(0, 3).map((asset) => ({
+            type: "image_url",
+            image_url: {
+              url: asset.dataUrl,
+            },
+          })),
+        ],
+      },
+    ],
+  }).then((value) => normalizeIdentityReview(value, hasSupportingIdentity))
+}
+
 function buildDeterministicImage({
   infographic,
   assets,
@@ -1903,57 +2033,95 @@ export async function POST(request: Request) {
       }),
       infographic
     )
-    const shouldForceDeterministicRender = assets.length > 0
-    const reservedPhotoPoster = shouldForceDeterministicRender
-      ? await generateReservedPhotoPoster({ infographic, facts, artDirection, assets })
-      : null
-    let finalImage = shouldForceDeterministicRender
-      ? reservedPhotoPoster
-        ? {
+    let finalImage = await generateFinalImage({ infographic, facts, artDirection, assets })
+    let renderMode: InfographicResponse["renderMode"] = "model-image"
+
+    const fallbackToComposite = async (reason: string) => {
+      const reservedPhotoPoster = assets.length > 0 ? await generateReservedPhotoPoster({ infographic, facts, artDirection, assets }) : null
+
+      if (reservedPhotoPoster) {
+        return {
+          image: {
             status: "generated" as const,
             model: `${IMAGE_MODEL_ID}+overlay-composite`,
             dataUrl: buildPosterOverlayCompositeSvgDataUrl(reservedPhotoPoster, assets),
             mimeType: "image/svg+xml",
             prompt: buildFinalImagePrompt({ infographic, facts, artDirection, assets }),
             revisedPrompt: null,
-            error: "Using model poster with reserved image windows plus enforced real-image overlay.",
-          }
-        : buildDeterministicImage({
-            infographic,
-            assets,
-            prompt: buildFinalImagePrompt({ infographic, facts, artDirection, assets }),
-            reason: "Model poster generation failed, using deterministic asset-composited render because source images must appear directly in the final output.",
-          })
-      : await generateFinalImage({ infographic, facts, artDirection, assets })
-    let renderMode: InfographicResponse["renderMode"] = shouldForceDeterministicRender
-      ? reservedPhotoPoster
-        ? "hybrid-svg"
-        : "deterministic-svg"
-      : "model-image"
+            error: reason,
+          },
+          mode: "hybrid-svg" as const,
+        }
+      }
 
-    if (!shouldForceDeterministicRender && (finalImage.status !== "generated" || !finalImage.dataUrl)) {
-      finalImage = buildDeterministicImage({
-        infographic,
-        assets,
-        prompt: finalImage.prompt,
-        reason: `Model render failed, using deterministic asset-composited render. ${finalImage.error ?? ""}`.trim(),
-      })
-      renderMode = "deterministic-svg"
-    } else if (!shouldForceDeterministicRender) {
-      const assetUsage = normalizeAssetUsage(
-        await callAssetUsageModel({ infographic, finalImage, assets }),
-        uploadedAssets.length > 0,
-        linkAssets.length > 0
-      )
-
-      if (assetUsage.shouldFallbackToDeterministicRender) {
-        finalImage = buildDeterministicImage({
+      return {
+        image: buildDeterministicImage({
           infographic,
           assets,
           prompt: finalImage.revisedPrompt ?? finalImage.prompt,
-          reason: `Asset enforcement fallback: ${assetUsage.summary}`,
+          reason,
+        }),
+        mode: "deterministic-svg" as const,
+      }
+    }
+
+    if (finalImage.status !== "generated" || !finalImage.dataUrl) {
+      const fallback = await fallbackToComposite(
+        `Model render failed, using asset-composited fallback. ${finalImage.error ?? ""}`.trim()
+      )
+      finalImage = fallback.image
+      renderMode = fallback.mode
+    } else if (assets.length > 0) {
+      const identityReview = await callIdentityReviewModel({ infographic, finalImage, assets })
+
+      if (!identityReview.approved) {
+        const revisedPrompt = [
+          finalImage.revisedPrompt ?? finalImage.prompt,
+          `Identity preservation feedback: ${identityReview.summary}`,
+          identityReview.issues.length > 0
+            ? `Fix these identity issues:\n${identityReview.issues.map((issue) => `- ${issue}`).join("\n")}`
+            : "",
+          "Preserve the recognizable primary anchor subject from the supplied image while redesigning only the surrounding poster treatment.",
+        ]
+          .filter(Boolean)
+          .join("\n\n")
+
+        finalImage = await generateFinalImage({
+          infographic,
+          facts,
+          artDirection,
+          assets,
+          promptOverride: revisedPrompt,
         })
-        renderMode = "deterministic-svg"
+
+        if (finalImage.status === "generated" && finalImage.dataUrl) {
+          const secondIdentityReview = await callIdentityReviewModel({ infographic, finalImage, assets })
+          if (!secondIdentityReview.approved) {
+            const fallback = await fallbackToComposite(`Identity-preservation fallback: ${secondIdentityReview.summary}`)
+            finalImage = fallback.image
+            renderMode = fallback.mode
+          }
+        } else {
+          const fallback = await fallbackToComposite(
+            `Identity-preservation regeneration failed, using asset-composited fallback. ${finalImage.error ?? ""}`.trim()
+          )
+          finalImage = fallback.image
+          renderMode = fallback.mode
+        }
+      }
+
+      if (renderMode === "model-image") {
+        const assetUsage = normalizeAssetUsage(
+          await callAssetUsageModel({ infographic, finalImage, assets }),
+          uploadedAssets.length > 0,
+          linkAssets.length > 0
+        )
+
+        if (assetUsage.shouldFallbackToDeterministicRender) {
+          const fallback = await fallbackToComposite(`Asset enforcement fallback: ${assetUsage.summary}`)
+          finalImage = fallback.image
+          renderMode = fallback.mode
+        }
       }
     }
 
