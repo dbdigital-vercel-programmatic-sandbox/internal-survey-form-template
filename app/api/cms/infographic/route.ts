@@ -361,7 +361,7 @@ type ChatCompletionPayload<T> = {
   error?: { message?: string }
   choices?: Array<{
     message?: {
-      content?: string
+      content?: unknown
     }
   }>
 } & T
@@ -888,7 +888,37 @@ async function callChatJson<T>({
     throw new Error("AI did not return content.")
   }
 
-  return JSON.parse(content) as T
+  const rawContent =
+    typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content
+            .map((item) => {
+              if (typeof item === "string") {
+                return item
+              }
+
+              if (typeof item?.text === "string") {
+                return item.text
+              }
+
+              return ""
+            })
+            .join("")
+        : ""
+
+  const normalizedContent = rawContent.trim()
+  if (!normalizedContent) {
+    throw new Error("AI returned empty content.")
+  }
+
+  const jsonCandidate = normalizedContent.match(/```json\s*([\s\S]*?)```/i)?.[1] ?? normalizedContent
+
+  try {
+    return JSON.parse(jsonCandidate) as T
+  } catch {
+    throw new Error(`AI returned non-JSON content: ${sanitizeText(normalizedContent, 220)}`)
+  }
 }
 
 function buildAssetSummary(assets: VisualAsset[]) {
