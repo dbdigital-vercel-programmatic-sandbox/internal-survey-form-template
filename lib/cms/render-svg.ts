@@ -5,6 +5,21 @@ const CANVAS_HEIGHT = 1600
 const DISPLAY_FONT_STACK = "'Noto Sans Devanagari', 'Hind', 'Mukta', 'Nirmala UI', Inter, Arial, sans-serif"
 const BODY_FONT_STACK = "'Noto Sans Devanagari', 'Hind', 'Mukta', 'Nirmala UI', Inter, Arial, sans-serif"
 
+type OverlaySlot = {
+  x: number
+  y: number
+  width: number
+  height: number
+  radius: number
+  clipId: string
+  label: "hero" | "support"
+}
+
+type OverlayPlacement = {
+  asset: VisualAsset
+  slot: OverlaySlot
+}
+
 function getStoryBriefLabel(language: InfographicSpec["contentLanguage"]) {
   if (language === "hi") {
     return "स्टोरी ब्रीफ"
@@ -339,38 +354,62 @@ function renderOverlayCard(
   ].join("")
 }
 
-function planOverlaySlots(assets: VisualAsset[]) {
+function buildOverlayAssetSequence(assets: VisualAsset[]) {
   const uploaded = assets.filter((asset) => asset.source === "upload")
   const linked = assets.filter((asset) => asset.source === "link")
   const hero = uploaded[0] ?? linked[0] ?? null
   const support = [...uploaded.slice(1), ...linked, ...assets].filter((asset) => asset.id !== hero?.id)
+  return { hero, support: support.filter((asset, index, list) => list.findIndex((item) => item.id === asset.id) === index) }
+}
+
+export function buildOverlayPlan(assets: VisualAsset[]) {
+  const { hero, support } = buildOverlayAssetSequence(assets)
+  if (!hero) {
+    return { hero: null, placements: [] as OverlayPlacement[] }
+  }
+
   const heroRatio = hero?.width && hero?.height ? hero.width / hero.height : 1.3
   const isWideHero = heroRatio >= 1.2
+  const heroSlot: OverlaySlot = isWideHero
+    ? { x: 590, y: 112, width: 388, height: 244, radius: 26, clipId: "overlay-hero", label: "hero" }
+    : { x: 724, y: 112, width: 254, height: 346, radius: 26, clipId: "overlay-hero", label: "hero" }
 
-  return {
-    hero,
-    heroSlot: isWideHero
-      ? { x: 598, y: 118, width: 380, height: 238, radius: 26, clipId: "overlay-hero" }
-      : { x: 724, y: 118, width: 254, height: 344, radius: 26, clipId: "overlay-hero" },
-    support: support.slice(0, 3),
-    supportSlots: [
-      { x: 598, y: 388, width: 118, height: 118, radius: 18, clipId: "overlay-support-0" },
-      { x: 730, y: 388, width: 118, height: 118, radius: 18, clipId: "overlay-support-1" },
-      { x: 862, y: 388, width: 118, height: 118, radius: 18, clipId: "overlay-support-2" },
-    ],
-  }
+  const compactSupportY = isWideHero ? 382 : 484
+  const supportSlots: OverlaySlot[] = [
+    { x: 590, y: compactSupportY, width: 122, height: 122, radius: 18, clipId: "overlay-support-0", label: "support" },
+    { x: 728, y: compactSupportY, width: 122, height: 122, radius: 18, clipId: "overlay-support-1", label: "support" },
+    { x: 866, y: compactSupportY, width: 112, height: 122, radius: 18, clipId: "overlay-support-2", label: "support" },
+  ]
+
+  const placements: OverlayPlacement[] = [{ asset: hero, slot: heroSlot }]
+
+  support.slice(0, supportSlots.length).forEach((asset, index) => {
+    placements.push({ asset, slot: supportSlots[index]! })
+  })
+
+  return { hero, placements }
+}
+
+export function describeOverlayPlan(assets: VisualAsset[]) {
+  const plan = buildOverlayPlan(assets)
+
+  return plan.placements
+    .map(({ asset, slot }, index) => {
+      const ratio = asset.width && asset.height ? (asset.width / asset.height).toFixed(2) : "unknown"
+      return `${index + 1}. ${slot.label} window for ${asset.source === "upload" ? "uploaded" : "article"} image \"${asset.title}\" at x=${slot.x}, y=${slot.y}, width=${slot.width}, height=${slot.height}, radius=${slot.radius}, aspect=${ratio}. This window must feel intentionally built into the poster, with enough breathing room so borders, labels, and nearby elements do not collide with the inserted image.`
+    })
+    .join("\n")
 }
 
 export function buildPosterOverlayCompositeSvgDataUrl(backgroundDataUrl: string, assets: VisualAsset[]) {
-  const { hero, heroSlot, support, supportSlots } = planOverlaySlots(assets)
+  const plan = buildOverlayPlan(assets)
 
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" width="${CANVAS_WIDTH}" height="${CANVAS_HEIGHT}" viewBox="0 0 ${CANVAS_WIDTH} ${CANVAS_HEIGHT}">
       <rect width="1080" height="1600" fill="#0f172a" />
       <image href="${backgroundDataUrl}" x="0" y="0" width="1080" height="1600" preserveAspectRatio="xMidYMid slice" />
-      ${renderOverlayCard(hero, heroSlot)}
-      ${support
-        .map((asset, index) => renderOverlayCard(asset, supportSlots[index]!))
+      ${plan.placements
+        .map(({ asset, slot }) => renderOverlayCard(asset, slot))
         .join("")}
     </svg>
   `.trim()

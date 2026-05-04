@@ -20,7 +20,7 @@ import {
   INFOGRAPHIC_TEMPLATE_REFERENCES,
   buildTemplateReferenceSummary,
 } from "@/lib/cms/templates"
-import { buildInfographicSvgDataUrl, buildPosterOverlayCompositeSvgDataUrl } from "@/lib/cms/render-svg"
+import { buildInfographicSvgDataUrl, buildPosterOverlayCompositeSvgDataUrl, describeOverlayPlan } from "@/lib/cms/render-svg"
 
 const CHAT_API_URL = "https://ai-gateway.vercel.sh/v1/chat/completions"
 const IMAGE_API_URL = "https://ai-gateway.vercel.sh/v1/images/generations"
@@ -277,6 +277,38 @@ const ASSET_USAGE_SCHEMA = {
   },
 } as const
 
+const WEBSITE_IMAGE_ANALYSIS_SCHEMA = {
+  name: "website_image_analyser",
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      keep: { type: "boolean" },
+      confidence: { type: "number" },
+      role: { type: "string" },
+      summary: { type: "string" },
+    },
+    required: ["keep", "confidence", "role", "summary"],
+  },
+} as const
+
+const POSTER_REVIEW_SCHEMA = {
+  name: "poster_review",
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      approved: { type: "boolean" },
+      summary: { type: "string" },
+      issues: {
+        type: "array",
+        items: { type: "string" },
+      },
+    },
+    required: ["approved", "summary", "issues"],
+  },
+} as const
+
 type RequestBody = {
   prompt: string
   mode?: "setup" | "refinement"
@@ -319,6 +351,13 @@ type AssetUsageResult = {
   usesUploadedImage?: unknown
   usesArticleImage?: unknown
   shouldFallbackToDeterministicRender?: unknown
+  summary?: unknown
+}
+
+type WebsiteImageAnalysisResult = {
+  keep?: unknown
+  confidence?: unknown
+  role?: unknown
   summary?: unknown
 }
 
@@ -1270,6 +1309,139 @@ async function requestRenderedImage({
   }
 }
 
+async function analyzeWebsiteImage({
+  prompt,
+  sources,
+  asset,
+}: {
+  prompt: string
+  sources: ExtractedSource[]
+  asset: VisualAsset
+}) {
+  const sourceSummary = buildSourceSummary(sources)
+
+  return callChatJson<WebsiteImageAnalysisResult>({
+    model: QA_MODEL_ID,
+    schema: WEBSITE_IMAGE_ANALYSIS_SCHEMA,
+    messages: [
+      {
+        role: "system",
+        content: [
+          "You are website-image-analyser.",
+          "Your job is to decide whether a scraped website image is worth using in an infographic for the given story.",
+          "Reject useless thumbnails, decorative icons, logos, navigation graphics, reaction buttons, maps pins, interface elements, emoji-like graphics, and low-information filler images.",
+          "Keep images only if they add editorial value, subject clarity, location context, event context, or supporting evidence.",
+          "Do not evaluate user-uploaded images here; only scraped website images.",
+        ].join(" "),
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: [
+              `Infographic request: ${sanitizeText(prompt, 2400)}`,
+              sources.length > 0 ? `Source context:\n${sourceSummary}` : "No source context was available.",
+              `Candidate website image: ${asset.title}`,
+              `Origin URL: ${asset.originUrl ?? "unknown"}`,
+              "Return keep=false if this is likely a thumbnail, decorative icon, or weak contextual image.",
+            ].join("\n\n"),
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: asset.dataUrl,
+            },
+          },
+        ],
+      },
+    ],
+  })
+}
+
+async function filterWebsiteImages({
+  prompt,
+  sources,
+  assets,
+}: {
+  prompt: string
+  sources: ExtractedSource[]
+  assets: VisualAsset[]
+}) {
+  const reviewed = await Promise.all(
+    assets.map(async (asset) => {
+      try {
+        const result = await analyzeWebsiteImage({ prompt, sources, asset })
+        return {
+          asset,
+          keep: Boolean(result.keep),
+          confidence: typeof result.confidence === "number" ? result.confidence : 0,
+        }
+      } catch {
+        return {
+          asset,
+          keep: false,
+          confidence: 0,
+        }
+      }
+    })
+  )
+
+  const kept = reviewed
+    .filter((item) => item.keep)
+    .sort((left, right) => right.confidence - left.confidence)
+    .map((item) => item.asset)
+
+  return kept.slice(0, MAX_SOURCE_IMAGES)
+}
+
+async function reviewReservedPhotoPoster({
+  infographic,
+  posterDataUrl,
+  assets,
+}: {
+  infographic: InfographicSpec
+  posterDataUrl: string
+  assets: VisualAsset[]
+}) {
+  return callChatJson<InfographicQa>({
+    model: QA_MODEL_ID,
+    schema: POSTER_REVIEW_SCHEMA,
+    messages: [
+      {
+        role: "system",
+        content: [
+          "You are reviewing an AI-generated infographic poster before real source images are composited into reserved slots.",
+          "Check whether the composition is strong, the typography is readable, and the reserved image windows are clean and suitable for real-photo replacement.",
+          "Check whether each reserved image window leaves accurate dedicated space and makes the final inserted image feel like a native part of the infographic rather than a pasted overlay.",
+          "If the reserved image areas clash with the layout, cover important text, feel awkward, leave too little breathing room, or the overall impact is weak, reject it.",
+        ].join(" "),
+      },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: [
+              `Title: ${infographic.title}`,
+              `Subtitle: ${infographic.subtitle}`,
+              `Reserved overlay plan:\n${describeOverlayPlan(assets)}`,
+              "Judge whether this poster will still look good after the real source images are inserted into those reserved windows.",
+              "Specifically verify that the reserved windows have accurate space, proper visual framing, and enough separation from nearby text or graphic elements.",
+            ].join("\n\n"),
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: posterDataUrl,
+            },
+          },
+        ],
+      },
+    ],
+  })
+}
+
 async function generateFinalImage({
   infographic,
   facts,
@@ -1381,15 +1553,12 @@ function buildReservedPhotoPosterPrompt({
     "The poster should be publication-ready and visually rich with the same overall quality as a fully AI-generated editorial graphic.",
     "Important: reserve dedicated clean photo windows for compositing real source images later.",
     "Do not place important text or key icons inside these photo windows.",
-    hasUpload
-      ? "Reserve one large rounded hero photo window in the upper-right area. Keep it visually integrated but clearly readable as a photo slot."
-      : "",
-    hasUpload || hasArticle
-      ? "Reserve three smaller rounded supporting photo windows in a horizontal row directly below the hero window on the right side."
-      : "",
+    hasUpload || hasArticle ? `Reserved photo window plan:\n${describeOverlayPlan(assets)}` : "",
     "Inside the reserved photo windows, use only subtle dark gradient placeholders or neutral blurred fills. Do not place real people, sports gear, landmarks, logos, or text there.",
     "Generate the rest of the poster completely: headline, subheadline, sections, stats, mood, background, and supporting infographic design everywhere outside those windows.",
     "Keep headline and all essential text away from the reserved windows so nothing important gets covered after compositing.",
+    "Leave accurate negative space around each reserved image window so inserted website or uploaded images feel built into the poster.",
+    "Use local framing devices around the reserved windows such as matching card edges, glow, stroke rhythm, shadow, or composition anchors so the inserted images belong naturally.",
     `Visual style: ${artDirection.visualStyle}`,
     "Do not translate the language unless explicitly requested.",
   ].join("\n\n")
@@ -1406,15 +1575,41 @@ async function generateReservedPhotoPoster({
   artDirection: InfographicArtDirection
   assets: VisualAsset[]
 }) {
+  const initialPrompt = buildReservedPhotoPosterPrompt({ infographic, facts, artDirection, assets })
+
   try {
-    const generatedImage = await requestRenderedImage({
+    let generatedImage = await requestRenderedImage({
       url: IMAGE_API_URL,
       body: JSON.stringify({
         model: IMAGE_MODEL_ID,
-        prompt: buildReservedPhotoPosterPrompt({ infographic, facts, artDirection, assets }),
+        prompt: initialPrompt,
         size: "1024x1536",
       }),
     })
+
+    const review = await reviewReservedPhotoPoster({
+      infographic,
+      posterDataUrl: generatedImage.dataUrl,
+      assets,
+    })
+
+    if (!review.approved) {
+      generatedImage = await requestRenderedImage({
+        url: IMAGE_API_URL,
+        body: JSON.stringify({
+          model: IMAGE_MODEL_ID,
+          prompt: [
+            initialPrompt,
+            `Regeneration feedback: ${sanitizeText(review.summary, 200)}`,
+            review.issues.length > 0 ? `Fix these issues:\n${review.issues.map((issue) => `- ${sanitizeText(issue, 200)}`).join("\n")}` : "",
+            "Improve composition, keep key text clear, and make the reserved photo windows feel intentional, editorial, and spatially correct for the inserted images.",
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
+          size: "1024x1536",
+        }),
+      })
+    }
 
     return generatedImage.dataUrl
   } catch {
@@ -1651,9 +1846,14 @@ export async function POST(request: Request) {
       })
     )
 
-    const linkAssets = downloadedImages.filter((item): item is DownloadedLinkAsset => Boolean(item))
-    const assets: VisualAsset[] = [...uploadedAssets, ...linkAssets]
     const sourceSummaries = pages.map((page) => page.source)
+    const rawLinkAssets = downloadedImages.filter((item): item is DownloadedLinkAsset => Boolean(item))
+    const linkAssets = await filterWebsiteImages({
+      prompt,
+      sources: sourceSummaries,
+      assets: rawLinkAssets,
+    })
+    const assets: VisualAsset[] = [...uploadedAssets, ...linkAssets]
     const history = (body.history ?? []).filter((message) => message.role === "user" || message.role === "assistant")
     const fallbackPalette = selectThemePalette({ prompt, sources: sourceSummaries })
     const preferredLanguage = detectPreferredLanguage({ prompt, sources: sourceSummaries })
