@@ -1,4 +1,4 @@
-"use client"
+"use client";
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -23,6 +23,7 @@
  * - `openViaDeepLinkJsonData(jsonData)` — open a native screen via deep link
  * - `triggerLogin({ loginMessage, source })` — opens the native login screen
  * - `shareView(imageUrl, shareTextAndLink?)` — triggers native share sheet
+ * - `triggerAnalyticsEvent({ event, properties })` — sends an analytics event through the native app
  *
  * HOOKS (derived from the context):
  * - `useWebviewContext()` — access all bridge methods and flags
@@ -64,6 +65,9 @@
  *    useIsWebview, useIsUserSignedIn, usePullToRefreshDisabler.
  * 4. `triggerLogin` is available via `useWebviewContext()`. It accepts
  *    `{ loginMessage: string; source: string }` — do not invent extra fields.
+ * 5. `triggerAnalyticsEvent` is available via `useWebviewContext()`. It only
+ *    sends events inside Android/iOS webviews. Outside webviews, or when the
+ *    native bridge is missing, it logs the skipped event.
  * ============================================================================
  */
 
@@ -73,35 +77,34 @@ import {
   useEffect,
   useState,
   type ReactNode,
-} from "react"
-import { LoaderIcon } from "lucide-react"
+} from "react";
 
 // ---------------------------------------------------------------------------
 // Native bridge interface detection
 // ---------------------------------------------------------------------------
 
-const android = (globalThis?.window as any)?.AndroidInterface
-const ios = (globalThis?.window as any)?.webkit?.messageHandlers
+const android = (globalThis?.window as any)?.AndroidInterface;
+const ios = (globalThis?.window as any)?.webkit?.messageHandlers;
 
-const isWebview = !!(android || ios?.openFullWeb)
-const isAndroidClient = !!android
-const isIOSClient = !!ios?.openFullWeb
+const isWebview = !!(android || ios?.openFullWeb);
+const isAndroidClient = !!android;
+const isIOSClient = !!ios?.openFullWeb;
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
 
 const getUniqueCallbackMethod = (callback: (res: any) => void): string => {
-  const win: any = globalThis.window
+  const win: any = globalThis.window;
   if (!win) {
-    return ""
+    return "";
   }
 
-  const functionName: any = `fn${Math.floor(Math.random() * 10000000000)}`
-  win[functionName] = callback
+  const functionName: any = `fn${Math.floor(Math.random() * 10000000000)}`;
+  win[functionName] = callback;
 
-  return functionName
-}
+  return functionName;
+};
 
 // ---------------------------------------------------------------------------
 // Bridge methods
@@ -110,65 +113,65 @@ const getUniqueCallbackMethod = (callback: (res: any) => void): string => {
 const closeScreen = () => {
   if (isAndroidClient) {
     if (android.closeScreenV2) {
-      android.closeScreenV2()
-      return
+      android.closeScreenV2();
+      return;
     }
-    android.closeScreen()
+    android.closeScreen();
   } else {
     if (ios.closeScreenV2) {
-      ios.closeScreenV2.postMessage("")
-      return
+      ios.closeScreenV2.postMessage("");
+      return;
     }
-    ios.closeScreen.postMessage("")
+    ios.closeScreen.postMessage("");
   }
-}
+};
 
 interface IAppUserData {
-  db_id: string // unique id assigned to device, e.g. '2232343'
-  app_version: string // version name of app, e.g. '7.0'
-  app_version_code: string // version code of app, e.g. '390'
-  app_platform: string // 'android' or 'ios'
-  auth_token: string // auth token of app, e.g. 'a6oaq3edtz59'
+  db_id: string; // unique id assigned to device, e.g. '2232343'
+  app_version: string; // version name of app, e.g. '7.0'
+  app_version_code: string; // version code of app, e.g. '390'
+  app_platform: string; // 'android' or 'ios'
+  auth_token: string; // auth token of app, e.g. 'a6oaq3edtz59'
   user?: {
-    unique_id: string
-    is_signed_in: boolean
-    phone_number: string // e.g. '+917906097279'
-    user_name: string
-    photo_url: string
-  }
+    unique_id: string;
+    is_signed_in: boolean;
+    phone_number: string; // e.g. '+917906097279'
+    user_name: string;
+    photo_url: string;
+  };
 }
 
 const getAppUserData = (): Promise<IAppUserData> => {
   return new Promise((resolve) => {
     if (isAndroidClient) {
       if (android.getAppUserDataV2) {
-        resolve(JSON.parse(android.getAppUserDataV2()))
-        return null
+        resolve(JSON.parse(android.getAppUserDataV2()));
+        return null;
       }
-      resolve(android.getAppUserData())
-      return null
+      resolve(android.getAppUserData());
+      return null;
     }
     const callback = getUniqueCallbackMethod((res) => {
-      resolve(res)
-      return ""
-    })
+      resolve(res);
+      return "";
+    });
 
     if (ios.getAppUserDataV2) {
-      ios.getAppUserDataV2.postMessage({ callback })
-      return null
+      ios.getAppUserDataV2.postMessage({ callback });
+      return null;
     }
 
-    ios.getAppUserData.postMessage({ callback })
-  })
-}
+    ios.getAppUserData.postMessage({ callback });
+  });
+};
 
 const enablePullToRefresh = (val: boolean) => {
   if (isAndroidClient) {
-    return android.enablePullToRefresh(`${val}`)
+    return android.enablePullToRefresh(`${val}`);
   }
 
-  return ios.enablePullToRefresh.postMessage(`${val}`)
-}
+  return ios.enablePullToRefresh.postMessage(`${val}`);
+};
 
 const triggerLogin = (params: { loginMessage: string; source: string }) => {
   openViaDeepLinkJsonData({
@@ -183,25 +186,25 @@ const triggerLogin = (params: { loginMessage: string; source: string }) => {
       },
     },
     source: params.source,
-  })
-}
+  });
+};
 
 const openViaDeepLinkJsonData = (jsonData: any) => {
   try {
     if (isAndroidClient) {
       if (android.openViaDeepLinkJsonData) {
-        android.openViaDeepLinkJsonData(JSON.stringify(jsonData))
+        android.openViaDeepLinkJsonData(JSON.stringify(jsonData));
       }
-      return
+      return;
     }
 
     if (ios.openViaDeepLinkJsonData) {
-      ios.openViaDeepLinkJsonData.postMessage(jsonData)
+      ios.openViaDeepLinkJsonData.postMessage(jsonData);
     }
   } catch (err) {
-    console.error(err)
+    console.error(err);
   }
-}
+};
 
 /**
  * Trigger native share sheet.
@@ -209,43 +212,95 @@ const openViaDeepLinkJsonData = (jsonData: any) => {
  * @param shareTextAndLink — optional text+link template, e.g. "*Headline text* — <link>"
  */
 const shareView = (params: {
-  imageUrl?: string
-  shareTextAndLink?: string
+  imageUrl?: string;
+  shareTextAndLink?: string;
 }) => {
   if (isWebview) {
     const payload = {
       imageUrl: params.imageUrl,
       overrideTemplate: params.shareTextAndLink,
-    }
+    };
     if (isAndroidClient) {
-      android.shareArticleV2?.(JSON.stringify(payload))
+      android.shareArticleV2?.(JSON.stringify(payload));
     } else {
-      ios.shareArticleV2?.postMessage(payload)
+      ios.shareArticleV2?.postMessage(payload);
     }
   } else {
     navigator.share?.({
       text: params.shareTextAndLink,
-    })
+    });
   }
+};
+
+interface AnalyticsEventParams {
+  event: string;
+  properties?: Record<string, unknown>;
 }
+
+const triggerAnalyticsEvent = (params: AnalyticsEventParams) => {
+  const event = {
+    event: "AI Generated Event", // Note: This will be hardcoded! Don't change it under any circumstances!
+    properties: {
+      ...(params.properties || {}),
+      custom_event_name: params.event, // Note: This is the custom event name that will be used to track the event in Mixpanel.
+      Platform: "Web",
+    },
+  };
+
+  if (!isWebview) {
+    console.info(
+      "triggerAnalyticsEvent skipped: native bridge is unavailable",
+      event,
+    );
+    return;
+  }
+
+  try {
+    if (isAndroidClient) {
+      if (android.trackMixpanelEvent) {
+        android.trackMixpanelEvent(JSON.stringify(event));
+        return;
+      }
+
+      console.info(
+        "triggerAnalyticsEvent skipped: native bridge is unavailable",
+        event,
+      );
+      return;
+    }
+
+    if (ios.trackMixpanelEvent) {
+      ios.trackMixpanelEvent.postMessage(event);
+      return;
+    }
+
+    console.info(
+      "triggerAnalyticsEvent skipped: native bridge is unavailable",
+      event,
+    );
+  } catch (err) {
+    console.error(err);
+  }
+};
 
 // ---------------------------------------------------------------------------
 // Context
 // ---------------------------------------------------------------------------
 
 interface WebviewContextValue {
-  isWebview: boolean
-  isAndroidClient: boolean
-  isIOSClient: boolean
-  getAppUserData: () => Promise<IAppUserData>
-  closeScreen: () => void
-  enablePullToRefresh: (val: boolean) => void
-  openViaDeepLinkJsonData: (jsonData: any) => void
-  triggerLogin: (params: { loginMessage: string; source: string }) => void
-  shareView: (params: { imageUrl?: string; shareTextAndLink?: string }) => void
+  isWebview: boolean;
+  isAndroidClient: boolean;
+  isIOSClient: boolean;
+  getAppUserData: () => Promise<IAppUserData>;
+  closeScreen: () => void;
+  enablePullToRefresh: (val: boolean) => void;
+  openViaDeepLinkJsonData: (jsonData: any) => void;
+  triggerLogin: (params: { loginMessage: string; source: string }) => void;
+  shareView: (params: { imageUrl?: string; shareTextAndLink?: string }) => void;
+  triggerAnalyticsEvent: (params: AnalyticsEventParams) => void;
 }
 
-const WebviewContext = createContext<WebviewContextValue | null>(null)
+const WebviewContext = createContext<WebviewContextValue | null>(null);
 
 // ---------------------------------------------------------------------------
 // Provider
@@ -271,35 +326,41 @@ const mockContextValue: WebviewContextValue = {
       },
     }),
   closeScreen: () => {
-    globalThis.window?.history?.back()
+    globalThis.window?.history?.back();
   },
   enablePullToRefresh: () => {
-    throw new Error("enablePullToRefresh is not available in mock mode")
+    throw new Error("enablePullToRefresh is not available in mock mode");
   },
   openViaDeepLinkJsonData: () => {
-    throw new Error("openViaDeepLinkJsonData is not available in mock mode")
+    throw new Error("openViaDeepLinkJsonData is not available in mock mode");
   },
   triggerLogin: () => {
-    throw new Error("triggerLogin is not available in mock mode")
+    throw new Error("triggerLogin is not available in mock mode");
   },
   shareView: () => {
-    throw new Error("shareView is not available in mock mode")
+    throw new Error("shareView is not available in mock mode");
   },
-}
+  triggerAnalyticsEvent: (params) => {
+    console.info(
+      "triggerAnalyticsEvent skipped: native bridge is unavailable",
+      params,
+    );
+  },
+};
 
 export function WebviewProvider({
   children,
   mockInDevMode = process.env.NODE_ENV === "development",
 }: {
-  children: ReactNode
-  mockInDevMode?: boolean
+  children: ReactNode;
+  mockInDevMode?: boolean;
 }) {
   if (!isWebview && !mockInDevMode) {
     return (
-      <div className="flex min-h-svh items-center justify-center bg-background px-6">
-        <LoaderIcon className="size-14 animate-spin text-muted-foreground" />
+      <div style={{ padding: 24, textAlign: "center" }}>
+        Content only available inside webview, not on website
       </div>
-    )
+    );
   }
 
   return (
@@ -316,13 +377,14 @@ export function WebviewProvider({
               openViaDeepLinkJsonData,
               triggerLogin,
               shareView,
+              triggerAnalyticsEvent,
             }
           : mockContextValue
       }
     >
       {children}
     </WebviewContext.Provider>
-  )
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -330,79 +392,81 @@ export function WebviewProvider({
 // ---------------------------------------------------------------------------
 
 export function useWebviewContext(): WebviewContextValue {
-  const ctx = useContext(WebviewContext)
+  const ctx = useContext(WebviewContext);
   if (!ctx) {
-    throw new Error("useWebviewContext must be used within a <WebviewProvider>")
+    throw new Error(
+      "useWebviewContext must be used within a <WebviewProvider>",
+    );
   }
-  return ctx
+  return ctx;
 }
 
 export const useIsWebview = () => {
-  const [webview, setWebview] = useState(true)
+  const [webview, setWebview] = useState(true);
   useEffect(() => {
-    setWebview(isWebview)
-  }, [])
+    setWebview(isWebview);
+  }, []);
 
-  return webview
-}
+  return webview;
+};
 
 export const useIsUserSignedIn = (pollingInterval: number = 250) => {
   const [isUserSignedIn, setIsUserSignedIn] = useState<boolean | undefined>(
-    undefined
-  )
-  const [appUserData, setAppUserData] = useState<IAppUserData | null>(null)
+    undefined,
+  );
+  const [appUserData, setAppUserData] = useState<IAppUserData | null>(null);
 
   useEffect(() => {
-    let interval: NodeJS.Timeout | null = null
-    let isRunning = false
+    let interval: NodeJS.Timeout | null = null;
+    let isRunning = false;
 
     const run = async () => {
-      if (isRunning) return
-      isRunning = true
+      if (isRunning) return;
+      isRunning = true;
       try {
         if (!isWebview) {
-          setIsUserSignedIn(false)
-          isRunning = false
-          return
+          setIsUserSignedIn(false);
+          isRunning = false;
+          return;
         }
 
-        const userData = await getAppUserData()
-        setAppUserData(userData)
-        const signedIn = !!userData.user?.is_signed_in
-        setIsUserSignedIn(signedIn)
+        const userData = await getAppUserData();
+        setAppUserData(userData);
+        const signedIn = !!userData.user?.is_signed_in;
+        setIsUserSignedIn(signedIn);
 
         if (signedIn && interval) {
-          clearInterval(interval)
-          interval = null
+          clearInterval(interval);
+          interval = null;
         }
       } finally {
-        isRunning = false
+        isRunning = false;
       }
-    }
+    };
 
-    run()
-    interval = setInterval(run, pollingInterval)
+    run();
+    interval = setInterval(run, pollingInterval);
     return () => {
       if (interval) {
-        clearInterval(interval)
-        interval = null
+        clearInterval(interval);
+        interval = null;
       }
-    }
-  }, [pollingInterval])
+    };
+  }, [pollingInterval]);
 
-  return { isUserSignedIn, appUserData }
-}
+  return { isUserSignedIn, appUserData };
+};
 
 export const usePullToRefreshDisabler = () => {
   useEffect(() => {
     if (isWebview) {
-      enablePullToRefresh(false)
+      enablePullToRefresh(false);
     }
 
     return () => {
       if (isWebview) {
-        enablePullToRefresh(true)
+        enablePullToRefresh(true);
       }
-    }
-  }, [])
-}
+    };
+  }, []);
+};
