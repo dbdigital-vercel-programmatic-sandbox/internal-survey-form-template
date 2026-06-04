@@ -43,6 +43,10 @@ type WebviewUser = {
 }
 
 type SurveyView = "intro" | "selection" | "questions"
+type ShareSource =
+  | "Survey Intro Page"
+  | "Location Selection Page"
+  | "Survey Submit Page"
 
 type SurveyLoadPayload = {
   campaign: SurveyCampaign
@@ -553,7 +557,8 @@ function DecisionTreeSurvey({
   onBack: () => void
   onSubmitted: (
     submission: SurveyResponse,
-    variant: "submitted" | "already"
+    variant: "submitted" | "already",
+    responseLabels?: Array<string | -1>
   ) => void
   onSubmitStart: () => void
   onSubmitEnd: () => void
@@ -667,6 +672,16 @@ function DecisionTreeSurvey({
     return path
   }
 
+  function getResponseLabels(fullPath: PathStep[]) {
+    return fullPath.map(({ questionId, optionId }) => {
+      const question = byId.get(questionId)
+      return (
+        question?.options.find((option) => option.id === optionId)
+          ?.optionText ?? -1
+      )
+    })
+  }
+
   async function submitSurvey() {
     if (
       !current ||
@@ -703,7 +718,7 @@ function DecisionTreeSurvey({
         }
       )
 
-      onSubmitted(data.submission, "submitted")
+      onSubmitted(data.submission, "submitted", getResponseLabels(fullPath))
     } catch (err) {
       if (err instanceof RequestError && err.status === 409) {
         const existing = (err.data as { submission?: SurveyResponse | null })
@@ -878,6 +893,15 @@ export function WebviewSurvey() {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const loginTriggeredRef = useRef(false)
+  const consumedEventTriggeredRef = useRef(false)
+  const surveyOpenedEventTriggeredRef = useRef(false)
+  const sourceQueryParam = useMemo(() => {
+    if (typeof window === "undefined") {
+      return ""
+    }
+
+    return new URLSearchParams(window.location.search).get("source") || ""
+  }, [])
 
   usePullToRefreshDisabler()
 
@@ -889,26 +913,91 @@ export function WebviewSurvey() {
     }
   }
 
-  const shareSurvey = useCallback(() => {
-    const metadata = (campaign?.metadata ?? {}) as SurveyCampaignMetadata
-    const shareLink =
-      metadata.shareLink || campaign?.deeplink || window.location.href
-    const shareTextAndLink =
-      metadata.shareText || `${campaign?.name ?? "भास्कर सर्वे"} - ${shareLink}`
+  const contentAnalyticsProperties = useCallback(
+    (nextCampaign: SurveyCampaign | null) => ({
+      Source: sourceQueryParam,
+      "Content ID": nextCampaign?.id,
+      "Content Title": nextCampaign?.name,
+      "Content Type": "Interactive Survey",
+    }),
+    [sourceQueryParam]
+  )
+  const currentContentAnalyticsProperties = useCallback(
+    () => contentAnalyticsProperties(campaign),
+    [campaign, contentAnalyticsProperties]
+  )
+  const interactiveSurveyProperties = useCallback(
+    (nextCampaign: SurveyCampaign | null) => ({
+      Source: sourceQueryParam,
+      "Content Type": "Interactive Survey",
+      "Content Title": nextCampaign?.name,
+    }),
+    [sourceQueryParam]
+  )
 
-    try {
-      shareView({
-        imageUrl: metadata.shareImage || metadata.bannerImg,
-        shareTextAndLink,
-      })
-    } catch {
-      window.open(
-        `https://wa.me/?text=${encodeURIComponent(shareTextAndLink)}`,
-        "_blank",
-        "noopener,noreferrer"
-      )
+  const locationAnalyticsProperties = useCallback(() => {
+    const selectedDistrict =
+      locations.districts.find(
+        (district) => district.id === selectedDistrictId
+      ) ?? null
+    const selectedVidhanSeat =
+      selectedDistrict?.vidhanSeats.find(
+        (seat) => seat.id === selectedVidhanSeatId
+      ) ?? null
+
+    return {
+      Source: sourceQueryParam,
+      District: selectedDistrict?.name,
+      "Content Location": selectedVidhanSeat?.name,
+      "Content Type": "Interactive Survey",
+      "Content Title": campaign?.name,
     }
-  }, [campaign, shareView])
+  }, [
+    campaign?.name,
+    locations.districts,
+    selectedDistrictId,
+    selectedVidhanSeatId,
+    sourceQueryParam,
+  ])
+
+  const shareSurvey = useCallback(
+    (shareSource: ShareSource) => {
+      const metadata = (campaign?.metadata ?? {}) as SurveyCampaignMetadata
+      const shareLink =
+        metadata.shareLink || campaign?.deeplink || window.location.href
+      const shareText =
+        metadata.shareText ||
+        "दैनिक भास्कर के इस सर्वे में हिस्सा लें\nअपनी राय बताएं"
+      const shareTextAndLink = `${shareText}\n${shareLink}`
+
+      triggerAnalyticsEvent({
+        event: "Content Shared",
+        properties: {
+          ...currentContentAnalyticsProperties(),
+          Source: shareSource,
+        },
+      })
+
+      try {
+        shareView({
+          imageUrl: metadata.shareImage || metadata.bannerImg,
+          shareTextAndLink,
+        })
+      } catch {
+        window.open(
+          `https://wa.me/?text=${encodeURIComponent(shareTextAndLink)}`,
+          "_blank",
+          "noopener,noreferrer"
+        )
+      }
+    },
+    [
+      campaign,
+      currentContentAnalyticsProperties,
+      shareView,
+      triggerAnalyticsEvent,
+    ]
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -974,11 +1063,7 @@ export function WebviewSurvey() {
           setError(null)
           triggerAnalyticsEvent({
             event: "Interactive Survey Opened",
-            properties: {
-              "Content ID": data.campaign.id,
-              "Content Title": data.campaign.name,
-              "Content Type": "Interactive Survey",
-            },
+            properties: interactiveSurveyProperties(data.campaign),
           })
         }
       } catch (err) {
@@ -1003,7 +1088,51 @@ export function WebviewSurvey() {
       cancelled = true
       stopPolling()
     }
-  }, [getAppUserData, triggerAnalyticsEvent])
+  }, [getAppUserData, interactiveSurveyProperties, triggerAnalyticsEvent])
+
+  useEffect(() => {
+    if (!campaign?.name || consumedEventTriggeredRef.current) {
+      return
+    }
+
+    const sessionKey = `interactive-consumed-${campaign.name}`
+    if (window.sessionStorage.getItem(sessionKey)) {
+      consumedEventTriggeredRef.current = true
+      return
+    }
+
+    consumedEventTriggeredRef.current = true
+    window.sessionStorage.setItem(sessionKey, "true")
+    triggerAnalyticsEvent({
+      event: "Interactive Survey Consumed",
+      properties: {
+        Source: sourceQueryParam,
+        "Content Type": "Interactive Survey",
+        "Content Title": campaign.name,
+      },
+    })
+  }, [campaign, sourceQueryParam, triggerAnalyticsEvent])
+
+  useEffect(() => {
+    if (
+      view !== "selection" ||
+      !campaign?.id ||
+      !campaign.name ||
+      surveyOpenedEventTriggeredRef.current
+    ) {
+      return
+    }
+
+    surveyOpenedEventTriggeredRef.current = true
+    triggerAnalyticsEvent({
+      event: "Survey Opened",
+      properties: {
+        Source: "User landed on survey",
+        "Content ID": campaign.id,
+        "Content Title": campaign.name,
+      },
+    })
+  }, [campaign, triggerAnalyticsEvent, view])
 
   useEffect(() => {
     if (status !== "signed-out" || loginTriggeredRef.current) {
@@ -1015,7 +1144,7 @@ export function WebviewSurvey() {
     try {
       triggerLogin({
         loginMessage: "सर्वे भरने के लिए लॉगिन करें",
-        source: "survey_webview",
+        source: "Interactive Survey",
       })
     } catch (err) {
       setError(
@@ -1034,6 +1163,11 @@ export function WebviewSurvey() {
     setSubmitError(null)
 
     try {
+      triggerAnalyticsEvent({
+        event: "Interactive Survey User Info Submitted",
+        properties: locationAnalyticsProperties(),
+      })
+
       const data = await requestJson<{ questions: DecisionTreeQuestion[] }>(
         `/api/webview/survey/questions?campaignId=${campaign.id}&vidhanSeatId=${selectedVidhanSeatId}`
       )
@@ -1061,18 +1195,26 @@ export function WebviewSurvey() {
         variant={submissionVariant}
         campaign={campaign}
         onClose={closeSurveyScreen}
-        onShare={shareSurvey}
+        onShare={() => shareSurvey("Survey Submit Page")}
       />
     )
   }
 
   if (status === "loading") {
-    return <LoadingScreen onBack={closeSurveyScreen} onShare={shareSurvey} />
+    return (
+      <LoadingScreen
+        onBack={closeSurveyScreen}
+        onShare={() => shareSurvey("Survey Intro Page")}
+      />
+    )
   }
 
   if (status === "signed-out") {
     return (
-      <Shell onBack={closeSurveyScreen} onShare={shareSurvey}>
+      <Shell
+        onBack={closeSurveyScreen}
+        onShare={() => shareSurvey("Survey Intro Page")}
+      >
         <div className="flex flex-1 flex-col justify-center px-5 py-8">
           <MessageCard
             icon={<SmartphoneIcon className="size-6" />}
@@ -1085,7 +1227,7 @@ export function WebviewSurvey() {
                   loginTriggeredRef.current = true
                   triggerLogin({
                     loginMessage: "सर्वे भरने के लिए लॉगिन करें",
-                    source: "survey_webview",
+                    source: "Interactive Survey",
                   })
                 }}
               >
@@ -1103,7 +1245,10 @@ export function WebviewSurvey() {
 
   if (status === "error" || !campaign || !user) {
     return (
-      <Shell onBack={closeSurveyScreen} onShare={shareSurvey}>
+      <Shell
+        onBack={closeSurveyScreen}
+        onShare={() => shareSurvey("Survey Intro Page")}
+      >
         <div className="flex flex-1 flex-col justify-center px-5 py-8">
           <MessageCard
             icon={<AlertCircleIcon className="size-6" />}
@@ -1136,7 +1281,11 @@ export function WebviewSurvey() {
 
         closeSurveyScreen()
       }}
-      onShare={shareSurvey}
+      onShare={() =>
+        shareSurvey(
+          view === "intro" ? "Survey Intro Page" : "Location Selection Page"
+        )
+      }
     >
       {view === "intro" ? (
         <IntroScreen
@@ -1176,17 +1325,18 @@ export function WebviewSurvey() {
           }}
           onSubmitEnd={() => setIsSubmitting(false)}
           onSubmitError={setSubmitError}
-          onSubmitted={(nextSubmission, variant) => {
+          onSubmitted={(nextSubmission, variant, responseLabels) => {
             setSubmission(nextSubmission)
             setSubmissionVariant(variant)
-            triggerAnalyticsEvent({
-              event: "Interactive Survey Submitted",
-              properties: {
-                "Content ID": campaign.id,
-                "Content Title": campaign.name,
-                "Content Type": "Interactive Survey",
-              },
-            })
+            if (variant === "submitted") {
+              triggerAnalyticsEvent({
+                event: "Interactive Survey Submitted",
+                properties: {
+                  ...locationAnalyticsProperties(),
+                  Response: responseLabels ?? [],
+                },
+              })
+            }
           }}
         />
       ) : null}
