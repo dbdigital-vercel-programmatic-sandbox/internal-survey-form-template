@@ -7,6 +7,7 @@ import {
   summarizeAnswers,
   validateSurveyAnswers,
 } from "../lib/survey"
+import { validateSurveyImport } from "../lib/survey-import"
 
 const questions: SurveyQuestion[] = [
   {
@@ -104,5 +105,54 @@ describe("survey helpers", () => {
         customValue: "Candidate",
       },
     ])
+  })
+})
+
+describe("survey import validation", () => {
+  it("returns format guidance when uploaded sheets are empty", () => {
+    const result = validateSurveyImport([], [])
+
+    assert.equal(result.valid, false)
+    assert.ok(result.errors.includes("MLA mapping sheet has no data rows."))
+    assert.ok(
+      result.errors.includes("Candidate alternatives sheet has no data rows.")
+    )
+    assert.ok(
+      result.format.mlaMapping.requiredHeaders.includes("District (English)")
+    )
+    assert.ok(
+      result.format.candidates.requiredHeaders.includes(
+        "Constituency (English) Auto-fill"
+      )
+    )
+  })
+
+  it("accepts a minimal MLA mapping and candidate alternatives pair", () => {
+    const result = validateSurveyImport(
+      [
+        {
+          "District (English)": "Lucknow",
+          "District (Hindi)": "लखनऊ",
+          "Constituency (English)": "Lucknow Central",
+          "Constituency (Hindi)": "लखनऊ मध्य",
+          "Sitting MLA (English)": "Ravi Das",
+          "Sitting MLA (Hindi)": "रवि दास",
+          "Sitting MLA Party (English)": "BJP",
+        },
+      ],
+      [
+        {
+          "Constituency (English) Auto-fill": "Lucknow Central, Lucknow",
+          Party: "BJP",
+          "Candidate Name 1": "रवि दास",
+        },
+      ]
+    )
+
+    assert.equal(result.valid, true)
+    assert.equal(result.counts.districts, 1)
+    assert.equal(result.counts.constituencies, 1)
+    assert.equal(result.counts.constituenciesWithCandidateParties, 1)
+    assert.equal(result.sample[0].key, "Lucknow|Lucknow Central")
   })
 })

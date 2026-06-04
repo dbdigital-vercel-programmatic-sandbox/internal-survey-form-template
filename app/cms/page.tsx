@@ -1,11 +1,15 @@
 "use client"
 
-import { useCallback, useEffect, useState, type FormEvent } from "react"
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import {
+  AlertTriangleIcon,
+  CheckCircle2Icon,
   DownloadIcon,
+  FileSpreadsheetIcon,
   LoaderIcon,
   RefreshCwIcon,
   Trash2Icon,
+  UploadIcon,
 } from "lucide-react"
 
 import { Badge } from "@/components/ui/badge"
@@ -27,6 +31,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { normalizePhoneNumber, type CmsAnswerSummary } from "@/lib/survey"
+import type { SurveyImportResult } from "@/lib/survey-import"
 
 type CmsSurveyResponse = {
   id: number
@@ -89,14 +94,151 @@ function AnswersPreview({ answers }: { answers: CmsAnswerSummary[] }) {
   )
 }
 
+function FormatBlock({
+  title,
+  requiredHeaders,
+  optionalHeaders,
+  csvExample,
+}: {
+  title: string
+  requiredHeaders: string[]
+  optionalHeaders: string[]
+  csvExample: string
+}) {
+  return (
+    <div className="rounded-lg border bg-muted/20 p-3">
+      <div className="text-sm font-medium">{title}</div>
+      <div className="mt-2 text-xs text-muted-foreground">
+        Required: {requiredHeaders.join(", ")}
+      </div>
+      <div className="mt-1 text-xs text-muted-foreground">
+        Optional: {optionalHeaders.join(", ")}
+      </div>
+      <pre className="mt-3 max-h-40 overflow-auto rounded-md bg-background p-3 text-xs">
+        {csvExample}
+      </pre>
+    </div>
+  )
+}
+
+function ImportResultPanel({ result }: { result: SurveyImportResult }) {
+  return (
+    <div
+      className={
+        result.valid
+          ? "rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-emerald-950 dark:border-emerald-900/60 dark:bg-emerald-950/30 dark:text-emerald-100"
+          : "rounded-lg border border-destructive/20 bg-destructive/5 p-4 text-destructive"
+      }
+    >
+      <div className="flex items-center gap-2 text-sm font-medium">
+        {result.valid ? <CheckCircle2Icon /> : <AlertTriangleIcon />}
+        {result.valid
+          ? result.updated
+            ? "Survey seed data updated"
+            : "Sheets are valid"
+          : "Sheets need fixes before update"}
+      </div>
+
+      <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-5">
+        <div>MLA rows: {result.counts.mlaRows}</div>
+        <div>Candidate rows: {result.counts.candidateRows}</div>
+        <div>Districts: {result.counts.districts}</div>
+        <div>Constituencies: {result.counts.constituencies}</div>
+        <div>
+          With candidates: {result.counts.constituenciesWithCandidateParties}
+        </div>
+      </div>
+
+      {result.errors.length > 0 ? (
+        <div className="mt-4">
+          <div className="text-sm font-medium">Errors</div>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-xs">
+            {result.errors.slice(0, 20).map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+          {result.errors.length > 20 ? (
+            <div className="mt-2 text-xs">
+              Showing first 20 of {result.errors.length} errors.
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {result.warnings.length > 0 ? (
+        <div className="mt-4">
+          <div className="text-sm font-medium">Warnings</div>
+          <ul className="mt-2 list-disc space-y-1 pl-5 text-xs">
+            {result.warnings.slice(0, 10).map((item) => (
+              <li key={item}>{item}</li>
+            ))}
+          </ul>
+          {result.warnings.length > 10 ? (
+            <div className="mt-2 text-xs">
+              Showing first 10 of {result.warnings.length} warnings.
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+
+      {result.sample.length > 0 ? (
+        <div className="mt-4">
+          <div className="text-sm font-medium">Sample generated rows</div>
+          <div className="mt-2 grid gap-2 lg:grid-cols-2">
+            {result.sample.map((item) => (
+              <div
+                key={item.key}
+                className="rounded-md border bg-background p-2"
+              >
+                <div className="text-xs font-medium">{item.key}</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  MLA: {item.mla?.mlaNameHindi || item.mla?.mlaName || "-"}
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  Parties: {item.parties.join(", ") || "-"}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {!result.valid ? (
+        <div className="mt-4 grid gap-3 lg:grid-cols-2">
+          <FormatBlock
+            title="MLA mapping CSV format"
+            requiredHeaders={result.format.mlaMapping.requiredHeaders}
+            optionalHeaders={result.format.mlaMapping.optionalHeaders}
+            csvExample={result.format.mlaMapping.csvExample}
+          />
+          <FormatBlock
+            title="Candidate alternatives CSV format"
+            requiredHeaders={result.format.candidates.requiredHeaders}
+            optionalHeaders={result.format.candidates.optionalHeaders}
+            csvExample={result.format.candidates.csvExample}
+          />
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 export default function CmsPage() {
   const [items, setItems] = useState<CmsSurveyResponse[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [clearing, setClearing] = useState(false)
+  const [importWorking, setImportWorking] = useState<
+    "validate" | "update" | null
+  >(null)
   const [phoneNumber, setPhoneNumber] = useState("")
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  const [importError, setImportError] = useState<string | null>(null)
+  const [importResult, setImportResult] = useState<SurveyImportResult | null>(
+    null
+  )
+  const importFormRef = useRef<HTMLFormElement>(null)
 
   const loadResponses = useCallback(async (showLoader = false) => {
     if (showLoader) {
@@ -163,6 +305,43 @@ export default function CmsPage() {
       setError(err instanceof Error ? err.message : "Unable to clear response")
     } finally {
       setClearing(false)
+    }
+  }
+
+  async function runSurveyImport(mode: "validate" | "update") {
+    if (!importFormRef.current) {
+      return
+    }
+
+    setImportWorking(mode)
+    setImportError(null)
+    setImportResult(null)
+    setNotice(null)
+
+    try {
+      const formData = new FormData(importFormRef.current)
+      formData.set("mode", mode)
+
+      const data = await fetchJson<{ result: SurveyImportResult }>(
+        "/api/cms/survey/import",
+        {
+          method: "POST",
+          body: formData,
+        }
+      )
+
+      setImportResult(data.result)
+
+      if (data.result.updated) {
+        setNotice("Survey seed data updated from the uploaded sheets.")
+        await loadResponses(true)
+      }
+    } catch (err) {
+      setImportError(
+        err instanceof Error ? err.message : "Unable to import survey data"
+      )
+    } finally {
+      setImportWorking(null)
     }
   }
 
@@ -270,6 +449,164 @@ export default function CmsPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card className="mb-6">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <FileSpreadsheetIcon />
+            Seed survey from XLSX
+          </CardTitle>
+          <CardDescription>
+            Upload the MLA mapping and candidate alternatives sheets, validate
+            them, then update the local survey tables.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form ref={importFormRef} className="grid gap-4">
+            <div className="grid gap-4 lg:grid-cols-2">
+              <label className="grid gap-2 text-sm font-medium">
+                MLA mapping sheet
+                <Input
+                  name="mlaFile"
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  disabled={importWorking !== null}
+                />
+              </label>
+              <label className="grid gap-2 text-sm font-medium">
+                Candidate alternatives sheet
+                <Input
+                  name="candidatesFile"
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  disabled={importWorking !== null}
+                />
+              </label>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-3">
+              <label className="grid gap-2 text-sm font-medium">
+                Campaign ID
+                <Input
+                  name="campaignId"
+                  defaultValue="1"
+                  inputMode="numeric"
+                  disabled={importWorking !== null}
+                />
+              </label>
+              <label className="grid gap-2 text-sm font-medium">
+                Campaign name
+                <Input
+                  name="campaignName"
+                  defaultValue="MLA Panchayat Pradhan Survey"
+                  disabled={importWorking !== null}
+                />
+              </label>
+              <label className="grid gap-2 text-sm font-medium">
+                State
+                <Input
+                  name="stateName"
+                  defaultValue="Uttar Pradesh"
+                  disabled={importWorking !== null}
+                />
+              </label>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <Input
+                name="deeplink"
+                placeholder="Deeplink"
+                disabled={importWorking !== null}
+              />
+              <Input
+                name="keywords"
+                placeholder="Highlight keywords, comma-separated"
+                disabled={importWorking !== null}
+              />
+              <Input
+                name="bannerImg"
+                placeholder="Banner image URL"
+                disabled={importWorking !== null}
+              />
+              <Input
+                name="introImg"
+                placeholder="Intro image URL"
+                disabled={importWorking !== null}
+              />
+              <Input
+                name="submitImg"
+                placeholder="Submit image URL"
+                disabled={importWorking !== null}
+              />
+              <Input
+                name="shareImage"
+                placeholder="Share image URL"
+                disabled={importWorking !== null}
+              />
+              <Input
+                name="shareLink"
+                placeholder="Share link"
+                disabled={importWorking !== null}
+              />
+              <Input
+                name="shareText"
+                placeholder="Share text"
+                disabled={importWorking !== null}
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={importWorking !== null}
+                onClick={() => void runSurveyImport("validate")}
+              >
+                {importWorking === "validate" ? (
+                  <LoaderIcon className="animate-spin" />
+                ) : (
+                  <CheckCircle2Icon />
+                )}
+                Validate sheets
+              </Button>
+              <Button
+                type="button"
+                disabled={importWorking !== null}
+                onClick={() => void runSurveyImport("update")}
+              >
+                {importWorking === "update" ? (
+                  <LoaderIcon className="animate-spin" />
+                ) : (
+                  <UploadIcon />
+                )}
+                Update seed data
+              </Button>
+              <Button type="button" variant="ghost" asChild>
+                <a href="/api/cms/survey/import?template=mla">
+                  MLA CSV template
+                </a>
+              </Button>
+              <Button type="button" variant="ghost" asChild>
+                <a href="/api/cms/survey/import?template=candidates">
+                  Candidate CSV template
+                </a>
+              </Button>
+            </div>
+          </form>
+
+          {importError ? (
+            <div className="mt-4 rounded-lg border border-destructive/20 bg-destructive/5 p-3 text-sm text-destructive">
+              {importError}
+            </div>
+          ) : null}
+
+          {importResult ? (
+            <div className="mt-4">
+              <ImportResultPanel result={importResult} />
+            </div>
+          ) : null}
+        </CardContent>
+      </Card>
 
       {loading ? (
         <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">

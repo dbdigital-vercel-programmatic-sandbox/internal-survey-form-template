@@ -1,7 +1,7 @@
 import * as XLSX from "xlsx"
 import { and, eq, inArray } from "drizzle-orm"
 
-import { db } from "../lib/db"
+import { db } from "@/lib/db"
 import {
   surveyCampaigns,
   surveyDistricts,
@@ -12,9 +12,110 @@ import {
   surveyVidhanSeatDistrictConnector,
   surveyVidhanSeats,
   type SurveyCampaignMetadata,
-} from "../lib/db/schema"
+} from "@/lib/db/schema"
 
 type Row = Record<string, unknown>
+
+type MlaInfo = {
+  mlaName: string
+  mlaNameHindi: string
+  passedAway: boolean
+  districtEnglish: string
+  party: string
+  photo: string
+}
+
+type SurveyImportModel = {
+  uniqueDistricts: Set<string>
+  districtEnglishToHindi: Map<string, string>
+  constituencyEnglishToHindi: Map<string, string>
+  constituencyToMla: Map<string, MlaInfo>
+  constituencyToParties: Map<string, string[]>
+  constituencyPartyToCandidates: Map<string, string[]>
+}
+
+export type SurveyImportConfig = {
+  campaignId: number
+  campaignName: string
+  stateName: string
+  deeplink: string
+  metadata: SurveyCampaignMetadata
+}
+
+export type SurveyImportResult = {
+  mode: "validate" | "update"
+  valid: boolean
+  errors: string[]
+  warnings: string[]
+  counts: {
+    mlaRows: number
+    candidateRows: number
+    districts: number
+    constituencies: number
+    constituenciesWithCandidateParties: number
+  }
+  sample: Array<{
+    key: string
+    mla: MlaInfo | undefined
+    parties: string[]
+  }>
+  format: SurveyImportFormat
+  updated?: boolean
+}
+
+export type SurveyImportFormat = {
+  mlaMapping: {
+    requiredHeaders: string[]
+    optionalHeaders: string[]
+    csvExample: string
+  }
+  candidates: {
+    requiredHeaders: string[]
+    optionalHeaders: string[]
+    csvExample: string
+  }
+}
+
+export const SURVEY_IMPORT_FORMAT: SurveyImportFormat = {
+  mlaMapping: {
+    requiredHeaders: [
+      "District (English)",
+      "Constituency (English)",
+      "Sitting MLA (Hindi) or Sitting MLA (English)",
+      "Sitting MLA Party (English) or Sitting MLA Party (Hindi)",
+    ],
+    optionalHeaders: [
+      "District (Hindi)",
+      "Constituency (Hindi)",
+      "Photo (250 X 250px)",
+      "Remark",
+    ],
+    csvExample: [
+      "District (English),District (Hindi),Constituency (English),Constituency (Hindi),Sitting MLA (English),Sitting MLA (Hindi),Sitting MLA Party (English),Sitting MLA Party (Hindi),Photo (250 X 250px),Remark",
+      "Lucknow,लखनऊ,Lucknow Central,लखनऊ मध्य,Ravi Das,रवि दास,BJP,भाजपा,ravi-das.jpg,",
+    ].join("\n"),
+  },
+  candidates: {
+    requiredHeaders: [
+      "Constituency (English) Auto-fill",
+      "Party",
+      "Candidate Name 1",
+    ],
+    optionalHeaders: [
+      "Candidate Name 2",
+      "Candidate Name 3",
+      "Candidate Name 4",
+      "Candidate Name 5",
+      "Candidate Name 6",
+      "Candidate Name 7",
+      "Candidate Name 8",
+    ],
+    csvExample: [
+      "Constituency (English) Auto-fill,Party,Candidate Name 1,Candidate Name 2,Candidate Name 3,Candidate Name 4,Candidate Name 5,Candidate Name 6,Candidate Name 7,Candidate Name 8",
+      '"Lucknow Central, Lucknow",BJP,रवि दास,अमित वर्मा,,,,,,',
+    ].join("\n"),
+  },
+}
 
 const PARTY_MAP: Record<string, string> = {
   BJP: "BJP",
@@ -45,23 +146,17 @@ const DEFAULT_MLA_GENDER = "Male"
 const DEFAULT_MLA_EDUCATION = "Graduate"
 const DEFAULT_MLA_REGION = "PashchimiUP"
 
-function getArg(name: string, fallback = "") {
-  const index = process.argv.indexOf(name)
-  return index >= 0 ? (process.argv[index + 1] ?? fallback) : fallback
-}
-
-function hasArg(name: string) {
-  return process.argv.includes(name)
-}
-
-function getInputPaths() {
-  return process.argv.slice(2).filter((arg) => !arg.startsWith("--"))
-}
-
-function getRows(path: string): Row[] {
-  const workbook = XLSX.readFile(path)
+export function parseWorkbookRows(buffer: ArrayBuffer): Row[] {
+  const workbook = XLSX.read(buffer, { type: "array" })
   const sheetName = workbook.SheetNames[0]
-  return XLSX.utils.sheet_to_json<Row>(workbook.Sheets[sheetName])
+
+  if (!sheetName) {
+    return []
+  }
+
+  return XLSX.utils.sheet_to_json<Row>(workbook.Sheets[sheetName], {
+    defval: "",
+  })
 }
 
 function getStrAny(row: Row, ...keys: string[]) {
@@ -124,23 +219,94 @@ function replacePlaceholders(
     .replace(/\$\$partyName\$\$/g, partyNameHindi ?? "")
 }
 
+function validateRows(mlaRows: Row[], candidateRows: Row[]) {
+  const errors: string[] = []
+  const warnings: string[] = []
+
+  if (mlaRows.length === 0) {
+    errors.push("MLA mapping sheet has no data rows.")
+  }
+
+  if (candidateRows.length === 0) {
+    errors.push("Candidate alternatives sheet has no data rows.")
+  }
+
+  for (const [index, row] of mlaRows.entries()) {
+    const rowNumber = index + 2
+    const districtEnglish = getStrAny(row, "District (English)", "District")
+    const constituencyEnglish = getStrAny(
+      row,
+      "Constituency (English)",
+      "Constituency"
+    )
+    const mlaName =
+      getStrAny(row, "Sitting MLA (Hindi)") ||
+      getStrAny(row, "Sitting MLA (English)", "Sitting MLA")
+    const party =
+      getStrAny(row, "Sitting MLA Party (English)") ||
+      getStrAny(row, "Sitting MLA Party (Hindi)", "Party")
+
+    if (!districtEnglish) {
+      errors.push(
+        `MLA mapping row ${rowNumber}: District (English) is required.`
+      )
+    }
+    if (!constituencyEnglish) {
+      errors.push(
+        `MLA mapping row ${rowNumber}: Constituency (English) is required.`
+      )
+    }
+    if (!mlaName) {
+      warnings.push(
+        `MLA mapping row ${rowNumber}: sitting MLA name is blank; "Unknown" will be used.`
+      )
+    }
+    if (!party) {
+      warnings.push(
+        `MLA mapping row ${rowNumber}: party is blank; Independent will be used.`
+      )
+    }
+  }
+
+  for (const [index, row] of candidateRows.entries()) {
+    const rowNumber = index + 2
+    const cell = getStrAny(
+      row,
+      "Constituency (English) Auto-fill",
+      "Constituency"
+    )
+    const party = getStrAny(row, "Party")
+    const hasCandidate = Array.from({ length: 8 }, (_, candidateIndex) =>
+      getStrAny(row, `Candidate Name ${candidateIndex + 1}`)
+    ).some(Boolean)
+
+    if (!cell) {
+      errors.push(
+        `Candidates row ${rowNumber}: Constituency (English) Auto-fill is required.`
+      )
+    }
+    if (!party) {
+      errors.push(`Candidates row ${rowNumber}: Party is required.`)
+    }
+    if (!hasCandidate) {
+      errors.push(
+        `Candidates row ${rowNumber}: at least Candidate Name 1 is required.`
+      )
+    }
+  }
+
+  return { errors, warnings }
+}
+
 function buildSurveyModel(mlaRows: Row[], candidateRows: Row[]) {
   const uniqueDistricts = new Set<string>()
   const districtEnglishToHindi = new Map<string, string>()
   const constituencyEnglishToHindi = new Map<string, string>()
-  const constituencyToMla = new Map<
-    string,
-    {
-      mlaName: string
-      mlaNameHindi: string
-      passedAway: boolean
-      districtEnglish: string
-      party: string
-      photo: string
-    }
-  >()
+  const constituencyToMla = new Map<string, MlaInfo>()
   const constituencyToParties = new Map<string, string[]>()
   const constituencyPartyToCandidates = new Map<string, string[]>()
+  const warnings: string[] = []
+  const errors: string[] = []
 
   for (const row of mlaRows) {
     const districtEnglish = getStrAny(row, "District (English)", "District")
@@ -181,7 +347,7 @@ function buildSurveyModel(mlaRows: Row[], candidateRows: Row[]) {
     })
   }
 
-  for (const row of candidateRows) {
+  for (const [index, row] of candidateRows.entries()) {
     const cell = getStrAny(
       row,
       "Constituency (English) Auto-fill",
@@ -193,15 +359,16 @@ function buildSurveyModel(mlaRows: Row[], candidateRows: Row[]) {
       continue
     }
 
-    const districtEnglish = parsed.district
-    const constituencyEnglish = parsed.constituency
-    const key = districtEnglish
-      ? vidhanKey(districtEnglish, constituencyEnglish)
+    const key = parsed.district
+      ? vidhanKey(parsed.district, parsed.constituency)
       : Array.from(constituencyToMla.keys()).find((candidateKey) =>
-          candidateKey.endsWith(`|${constituencyEnglish}`)
+          candidateKey.endsWith(`|${parsed.constituency}`)
         )
 
-    if (!key) {
+    if (!key || !constituencyToMla.has(key)) {
+      errors.push(
+        `Candidates row ${index + 2}: constituency "${cell}" was not found in the MLA mapping sheet.`
+      )
       continue
     }
 
@@ -219,8 +386,8 @@ function buildSurveyModel(mlaRows: Row[], candidateRows: Row[]) {
     const partyKey = `${key}|${party}`
     const candidates = constituencyPartyToCandidates.get(partyKey) ?? []
 
-    for (let index = 1; index <= 8; index += 1) {
-      const candidate = getStrAny(row, `Candidate Name ${index}`)
+    for (let candidateIndex = 1; candidateIndex <= 8; candidateIndex += 1) {
+      const candidate = getStrAny(row, `Candidate Name ${candidateIndex}`)
       if (candidate && !candidates.includes(candidate)) {
         candidates.push(candidate)
       }
@@ -229,56 +396,52 @@ function buildSurveyModel(mlaRows: Row[], candidateRows: Row[]) {
     constituencyPartyToCandidates.set(partyKey, candidates)
   }
 
+  for (const key of constituencyToMla.keys()) {
+    if (!constituencyToParties.has(key)) {
+      warnings.push(
+        `No candidate alternatives were found for ${key}; party/candidate follow-up questions may have no options.`
+      )
+    }
+  }
+
   return {
-    uniqueDistricts,
-    districtEnglishToHindi,
-    constituencyEnglishToHindi,
-    constituencyToMla,
-    constituencyToParties,
-    constituencyPartyToCandidates,
+    model: {
+      uniqueDistricts,
+      districtEnglishToHindi,
+      constituencyEnglishToHindi,
+      constituencyToMla,
+      constituencyToParties,
+      constituencyPartyToCandidates,
+    },
+    errors,
+    warnings,
   }
 }
 
-function getMetadata(): SurveyCampaignMetadata {
-  return {
-    bannerImg: getArg("--banner-img") || undefined,
-    introImg: getArg("--intro-img") || undefined,
-    submitImg: getArg("--submit-img") || undefined,
-    shareLink: getArg("--share-link") || undefined,
-    shareText: getArg("--share-text") || undefined,
-    shareImage: getArg("--share-image") || undefined,
-    highlightKeywords: getArg("--highlight")
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean),
-  }
-}
-
-async function main() {
-  const [mlaSheetPath, candidatesSheetPath] = getInputPaths()
-  const shouldWrite = hasArg("--write")
-  const campaignId = Number.parseInt(getArg("--campaign-id", "1"), 10)
-  const campaignName =
-    getArg("--campaign-name") || "MLA Panchayat Pradhan Survey"
-  const stateName = getArg("--state-name") || "Uttar Pradesh"
-  const deeplink = getArg("--deeplink")
-
-  if (!mlaSheetPath || !candidatesSheetPath) {
-    throw new Error(
-      "Usage: pnpm seed:mla-survey <mla-sheet.xlsx> <candidates-sheet.xlsx> [--write] [--campaign-id 1]"
-    )
-  }
-
-  const mlaRows = getRows(mlaSheetPath)
-  const candidateRows = getRows(candidatesSheetPath)
-  const model = buildSurveyModel(mlaRows, candidateRows)
+function createResult({
+  mode,
+  mlaRows,
+  candidateRows,
+  model,
+  errors,
+  warnings,
+  updated,
+}: {
+  mode: "validate" | "update"
+  mlaRows: Row[]
+  candidateRows: Row[]
+  model: SurveyImportModel
+  errors: string[]
+  warnings: string[]
+  updated?: boolean
+}): SurveyImportResult {
   const constituencies = Array.from(model.constituencyToMla.keys())
 
-  const dryRunSummary = {
-    mode: shouldWrite ? "write" : "dry-run",
-    campaignId,
-    campaignName,
-    stateName,
+  return {
+    mode,
+    valid: errors.length === 0,
+    errors,
+    warnings,
     counts: {
       mlaRows: mlaRows.length,
       candidateRows: candidateRows.length,
@@ -286,52 +449,79 @@ async function main() {
       constituencies: constituencies.length,
       constituenciesWithCandidateParties: model.constituencyToParties.size,
     },
-    sample: constituencies.slice(0, 3).map((key) => ({
+    sample: constituencies.slice(0, 5).map((key) => ({
       key,
       mla: model.constituencyToMla.get(key),
       parties: model.constituencyToParties.get(key) ?? [],
     })),
+    format: SURVEY_IMPORT_FORMAT,
+    updated,
+  }
+}
+
+export function validateSurveyImport(mlaRows: Row[], candidateRows: Row[]) {
+  const rowValidation = validateRows(mlaRows, candidateRows)
+  const built = buildSurveyModel(mlaRows, candidateRows)
+  const errors = [...rowValidation.errors, ...built.errors]
+  const warnings = [...rowValidation.warnings, ...built.warnings]
+
+  return createResult({
+    mode: "validate",
+    mlaRows,
+    candidateRows,
+    model: built.model,
+    errors,
+    warnings,
+  })
+}
+
+export async function applySurveyImport({
+  mlaRows,
+  candidateRows,
+  config,
+}: {
+  mlaRows: Row[]
+  candidateRows: Row[]
+  config: SurveyImportConfig
+}) {
+  const validation = validateSurveyImport(mlaRows, candidateRows)
+
+  if (!validation.valid) {
+    return validation
   }
 
-  console.log(JSON.stringify(dryRunSummary, null, 2))
-
-  if (!shouldWrite) {
-    return
-  }
-
-  if (!process.env.DATABASE_URL) {
-    throw new Error("DATABASE_URL is required when --write is passed.")
-  }
-
+  const built = buildSurveyModel(mlaRows, candidateRows)
+  const model = built.model
+  const constituencies = Array.from(model.constituencyToMla.keys())
   const existingState = await db
     .select()
     .from(surveyStates)
-    .where(eq(surveyStates.name, stateName))
+    .where(eq(surveyStates.name, config.stateName))
     .limit(1)
   const [state] =
     existingState.length > 0
       ? existingState
       : await db
           .insert(surveyStates)
-          .values({ name: stateName, cid: "521", position: 1 })
+          .values({ name: config.stateName, cid: "521", position: 1 })
           .returning()
 
   const [campaign] = await db
     .insert(surveyCampaigns)
     .values({
-      id: campaignId,
-      name: campaignName,
-      deeplink,
+      id: config.campaignId,
+      name: config.campaignName,
+      deeplink: config.deeplink,
       stateId: state.id,
-      metadata: getMetadata(),
+      metadata: config.metadata,
     })
     .onConflictDoUpdate({
       target: surveyCampaigns.id,
       set: {
-        name: campaignName,
-        deeplink,
+        name: config.campaignName,
+        deeplink: config.deeplink,
         stateId: state.id,
-        metadata: getMetadata(),
+        metadata: config.metadata,
       },
     })
     .returning()
@@ -339,8 +529,6 @@ async function main() {
   const districtIdByEnglish = new Map<string, number>()
 
   for (const districtEnglish of model.uniqueDistricts) {
-    const districtHindi =
-      model.districtEnglishToHindi.get(districtEnglish) ?? districtEnglish
     const existing = await db
       .select()
       .from(surveyDistricts)
@@ -357,7 +545,9 @@ async function main() {
         : await db
             .insert(surveyDistricts)
             .values({
-              name: districtHindi,
+              name:
+                model.districtEnglishToHindi.get(districtEnglish) ??
+                districtEnglish,
               englishName: districtEnglish,
               stateId: state.id,
               position: 1,
@@ -384,14 +574,15 @@ async function main() {
     .where(eq(surveyDistricts.stateId, state.id))
 
   for (const row of existingVidhanRows) {
+    const districtEnglish = row.district.englishName ?? ""
     if (row.vidhan.englishName) {
       vidhanIdByKey.set(
-        vidhanKey(row.district.englishName ?? "", row.vidhan.englishName),
+        vidhanKey(districtEnglish, row.vidhan.englishName),
         row.vidhan.id
       )
     }
     vidhanIdByKey.set(
-      vidhanKey(row.district.englishName ?? "", row.vidhan.name),
+      vidhanKey(districtEnglish, row.vidhan.name),
       row.vidhan.id
     )
   }
@@ -465,7 +656,6 @@ async function main() {
   }
 
   for (const key of constituencies) {
-    const [, constituencyEnglish] = key.split("|")
     const vidhanId = vidhanIdByKey.get(key)
     const mla = model.constituencyToMla.get(key)
 
@@ -631,14 +821,11 @@ async function main() {
     await insertOption("मेरी जाति के नहीं हैं", noQuestionId)
     await insertPartyCandidateFlow(noOptionId, 4)
     await insertPartyCandidateFlow(cantSayOptionId, 7)
-
-    console.log(`Seeded questions for ${constituencyEnglish}`)
   }
 
-  console.log("Seed completed.")
+  return {
+    ...validation,
+    mode: "update" as const,
+    updated: true,
+  }
 }
-
-main().catch((error) => {
-  console.error(error)
-  process.exitCode = 1
-})
