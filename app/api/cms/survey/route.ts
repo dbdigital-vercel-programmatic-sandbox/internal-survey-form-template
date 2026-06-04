@@ -1,6 +1,7 @@
-import { desc, eq } from "drizzle-orm"
+import { eq } from "drizzle-orm"
 import { NextResponse } from "next/server"
 
+import { loadCmsSurveyResponses } from "@/lib/cms-survey"
 import { db } from "@/lib/db"
 import { surveyResponses } from "@/lib/db/schema"
 import { getSession } from "@/lib/internal/auth-session"
@@ -35,10 +36,7 @@ export async function GET() {
     return databaseUnavailable()
   }
 
-  const items = await db
-    .select()
-    .from(surveyResponses)
-    .orderBy(desc(surveyResponses.createdAt), desc(surveyResponses.id))
+  const items = await loadCmsSurveyResponses()
 
   return NextResponse.json({ items })
 }
@@ -53,8 +51,8 @@ export async function DELETE(request: Request) {
     return databaseUnavailable()
   }
 
-  const body = await request.json()
-  const phoneNumber = normalizePhoneNumber(body.phoneNumber)
+  const body = await request.json().catch(() => null)
+  const phoneNumber = normalizePhoneNumber(body?.phoneNumber)
 
   if (!phoneNumber) {
     return NextResponse.json(

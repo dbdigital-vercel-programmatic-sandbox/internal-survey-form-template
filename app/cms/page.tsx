@@ -26,18 +26,20 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { normalizePhoneNumber } from "@/lib/survey"
+import { normalizePhoneNumber, type CmsAnswerSummary } from "@/lib/survey"
 
 type CmsSurveyResponse = {
   id: number
+  campaignId: number
+  campaignName: string
   userId: string
   userName: string | null
   phoneNumber: string
-  cmFace: string
-  cmCaste: string
-  cmQuality: string
-  nitishShouldStepDown: string
-  nitishTenurePreference: string
+  districtName: string
+  vidhanSeatName: string
+  mlaName: string | null
+  partyName: string | null
+  answersSummary: CmsAnswerSummary[]
   createdAt: string
 }
 
@@ -60,6 +62,31 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   }
 
   return data as T
+}
+
+function AnswersPreview({ answers }: { answers: CmsAnswerSummary[] }) {
+  if (answers.length === 0) {
+    return <span className="text-muted-foreground">No answers</span>
+  }
+
+  return (
+    <div className="flex max-w-xl flex-col gap-2">
+      {answers.map((answer, index) => (
+        <div
+          key={`${answer.questionId}-${index}`}
+          className="rounded-lg border bg-muted/30 p-2"
+        >
+          <div className="line-clamp-2 text-xs font-medium">
+            {index + 1}. {answer.questionText}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {answer.optionText || "-"}
+            {answer.customValue ? `: ${answer.customValue}` : ""}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 export default function CmsPage() {
@@ -150,8 +177,7 @@ export default function CmsPage() {
             <Badge variant="secondary">{items.length}</Badge>
           </div>
           <p className="text-sm text-muted-foreground">
-            Download all submissions as CSV or clear a single response by phone
-            number.
+            Dynamic MLA survey submissions with flattened question answers.
           </p>
         </div>
 
@@ -190,9 +216,7 @@ export default function CmsPage() {
         <Card>
           <CardHeader>
             <CardTitle>Total submissions</CardTitle>
-            <CardDescription>
-              Current survey entries in the database
-            </CardDescription>
+            <CardDescription>Current dynamic survey entries</CardDescription>
           </CardHeader>
           <CardContent>
             <p className="text-3xl font-semibold tabular-nums">
@@ -219,7 +243,7 @@ export default function CmsPage() {
           <CardHeader>
             <CardTitle>Clear by phone</CardTitle>
             <CardDescription>
-              Delete a single user response using the app phone number
+              Delete all responses for one phone
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -260,19 +284,17 @@ export default function CmsPage() {
         </Card>
       ) : (
         <Card>
-          <CardContent className="p-0">
+          <CardContent className="overflow-x-auto p-0">
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead className="min-w-40">Submitted</TableHead>
+                  <TableHead className="min-w-48">Campaign</TableHead>
                   <TableHead className="min-w-36">Phone</TableHead>
-                  <TableHead className="min-w-36">User ID</TableHead>
-                  <TableHead className="min-w-36">User name</TableHead>
-                  <TableHead className="min-w-40">CM face</TableHead>
-                  <TableHead className="min-w-28">Caste</TableHead>
-                  <TableHead className="min-w-64">Quality</TableHead>
-                  <TableHead className="min-w-28">Step down</TableHead>
-                  <TableHead className="min-w-64">Tenure preference</TableHead>
+                  <TableHead className="min-w-36">User</TableHead>
+                  <TableHead className="min-w-48">Location</TableHead>
+                  <TableHead className="min-w-44">MLA</TableHead>
+                  <TableHead className="min-w-[36rem]">Answers</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -281,16 +303,34 @@ export default function CmsPage() {
                     <TableCell className="text-xs text-muted-foreground">
                       {new Date(item.createdAt).toLocaleString()}
                     </TableCell>
-                    <TableCell>{item.phoneNumber}</TableCell>
-                    <TableCell className="font-mono text-xs">
-                      {item.userId}
+                    <TableCell>
+                      <div className="font-medium">{item.campaignName}</div>
+                      <div className="font-mono text-xs text-muted-foreground">
+                        #{item.campaignId}
+                      </div>
                     </TableCell>
-                    <TableCell>{item.userName ?? "-"}</TableCell>
-                    <TableCell>{item.cmFace}</TableCell>
-                    <TableCell>{item.cmCaste}</TableCell>
-                    <TableCell>{item.cmQuality}</TableCell>
-                    <TableCell>{item.nitishShouldStepDown}</TableCell>
-                    <TableCell>{item.nitishTenurePreference}</TableCell>
+                    <TableCell>{item.phoneNumber}</TableCell>
+                    <TableCell>
+                      <div>{item.userName ?? "-"}</div>
+                      <div className="font-mono text-xs text-muted-foreground">
+                        {item.userId}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div>{item.districtName}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {item.vidhanSeatName}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div>{item.mlaName ?? "-"}</div>
+                      <div className="text-xs text-muted-foreground">
+                        {item.partyName ?? ""}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <AnswersPreview answers={item.answersSummary} />
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

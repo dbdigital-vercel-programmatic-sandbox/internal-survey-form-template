@@ -1,8 +1,6 @@
-import { desc } from "drizzle-orm"
 import { NextResponse } from "next/server"
 
-import { db } from "@/lib/db"
-import { surveyResponses } from "@/lib/db/schema"
+import { loadCmsSurveyResponses } from "@/lib/cms-survey"
 import { getSession } from "@/lib/internal/auth-session"
 
 export const dynamic = "force-dynamic"
@@ -34,36 +32,73 @@ export async function GET() {
     )
   }
 
-  const items = await db
-    .select()
-    .from(surveyResponses)
-    .orderBy(desc(surveyResponses.createdAt), desc(surveyResponses.id))
+  const items = await loadCmsSurveyResponses()
+  const maxAnswers = Math.max(
+    0,
+    ...items.map((item) => item.answersSummary.length)
+  )
+  const answerHeaders = Array.from({ length: maxAnswers }, (_, index) => [
+    `q${index + 1}_id`,
+    `q${index + 1}_text`,
+    `q${index + 1}_option_ids`,
+    `q${index + 1}_option_text`,
+    `q${index + 1}_custom_value`,
+  ]).flat()
 
   const lines = [
     [
       "submitted_at",
+      "campaign_id",
+      "campaign_name",
       "user_id",
       "user_name",
       "phone_number",
-      "cm_face",
-      "cm_caste",
-      "cm_quality",
-      "nitish_should_step_down",
-      "nitish_tenure_preference",
+      "state_id",
+      "district_id",
+      "district_name",
+      "vidhan_seat_id",
+      "vidhan_seat_name",
+      "mla_name",
+      "party_name",
+      ...answerHeaders,
     ].join(","),
-    ...items.map((item) =>
-      [
-        escapeCsvValue(item.createdAt.toISOString()),
+    ...items.map((item) => {
+      const answerValues = Array.from({ length: maxAnswers }, (_, index) => {
+        const answer = item.answersSummary[index]
+        return answer
+          ? [
+              escapeCsvValue(answer.questionId),
+              escapeCsvValue(answer.questionText),
+              escapeCsvValue(answer.optionIds.join("|")),
+              escapeCsvValue(answer.optionText),
+              escapeCsvValue(answer.customValue),
+            ]
+          : [
+              escapeCsvValue(""),
+              escapeCsvValue(""),
+              escapeCsvValue(""),
+              escapeCsvValue(""),
+              escapeCsvValue(""),
+            ]
+      }).flat()
+
+      return [
+        escapeCsvValue(item.createdAt),
+        escapeCsvValue(item.campaignId),
+        escapeCsvValue(item.campaignName),
         escapeCsvValue(item.userId),
         escapeCsvValue(item.userName),
         escapeCsvValue(item.phoneNumber),
-        escapeCsvValue(item.cmFace),
-        escapeCsvValue(item.cmCaste),
-        escapeCsvValue(item.cmQuality),
-        escapeCsvValue(item.nitishShouldStepDown),
-        escapeCsvValue(item.nitishTenurePreference),
+        escapeCsvValue(item.stateId),
+        escapeCsvValue(item.districtId),
+        escapeCsvValue(item.districtName),
+        escapeCsvValue(item.vidhanSeatId),
+        escapeCsvValue(item.vidhanSeatName),
+        escapeCsvValue(item.mlaName),
+        escapeCsvValue(item.partyName),
+        ...answerValues,
       ].join(",")
-    ),
+    }),
   ]
 
   return new Response(`\uFEFF${lines.join("\n")}`, {
