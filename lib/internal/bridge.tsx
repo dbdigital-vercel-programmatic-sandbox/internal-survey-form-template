@@ -239,10 +239,9 @@ interface AnalyticsEventParams {
 
 const triggerAnalyticsEvent = (params: AnalyticsEventParams) => {
   const event = {
-    event: "AI Generated Event", // Note: This will be hardcoded! Don't change it under any circumstances!
+    event: params.event,
     properties: {
       ...(params.properties || {}),
-      custom_event_name: params.event, // Note: This is the custom event name that will be used to track the event in Mixpanel.
       Platform: "Web",
     },
   };
@@ -257,8 +256,8 @@ const triggerAnalyticsEvent = (params: AnalyticsEventParams) => {
 
   try {
     if (isAndroidClient) {
-      if (android.trackMixpanelEvent) {
-        android.trackMixpanelEvent(JSON.stringify(event));
+      if (android.trackAppBuilderEvent) {
+        android.trackAppBuilderEvent(JSON.stringify(event));
         return;
       }
 
@@ -269,8 +268,8 @@ const triggerAnalyticsEvent = (params: AnalyticsEventParams) => {
       return;
     }
 
-    if (ios.trackMixpanelEvent) {
-      ios.trackMixpanelEvent.postMessage(event);
+    if (ios.trackAppBuilderEvent) {
+      ios.trackAppBuilderEvent.postMessage(event);
       return;
     }
 
