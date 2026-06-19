@@ -1,0 +1,1 @@
+-As per project requirements, wrap Database read calls with `unstable_cache` from next/cache and invalidate via tags to reduce read bandwidth/compute.
