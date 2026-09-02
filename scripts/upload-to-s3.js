@@ -12,7 +12,8 @@ const MAX_CONCURRENT_UPLOADS =
   Number.isFinite(parsedConcurrency) && parsedConcurrency > 0
     ? Math.floor(parsedConcurrency)
     : DEFAULT_CONCURRENT_UPLOADS
-const BUILD_DIR = ".next/static"
+const STATIC_DIR = ".next/static"
+const ASSETS_DIR = "assets"
 
 function getRequiredEnv(name) {
   const value = process.env[name]
@@ -26,7 +27,7 @@ function getRequiredEnv(name) {
 
 const BUCKET = getRequiredEnv("APP_BUILDER_S3_BUCKET")
 const vercelUrl = getRequiredEnv("VERCEL_URL").replace(/^\/+|\/+$/g, "")
-const CDN_URL = cdnUrl ? `${cdnUrl}/${vercelUrl}` : ""
+const CDN_URL = cdnUrl ? `https://${cdnUrl}` : ""
 
 const s3 = new AWS.S3({
   accessKeyId: getRequiredEnv("APP_BUILDER_AWS_ACCESS_KEY_ID"),
@@ -36,23 +37,27 @@ const s3 = new AWS.S3({
 
 function getStaticFiles(dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    if (entry.name === ".gitkeep") {
+      return []
+    }
+
     const fullPath = path.join(dir, entry.name)
 
     return entry.isDirectory() ? getStaticFiles(fullPath) : [fullPath]
   })
 }
 
-function getS3Key(filePath) {
+function getS3Key(filePath, sourceDir, destinationDir) {
   return path.posix.join(
     vercelUrl,
-    "_next/static",
-    path.relative(BUILD_DIR, filePath).split(path.sep).join("/")
+    destinationDir,
+    path.relative(sourceDir, filePath).split(path.sep).join("/")
   )
 }
 
-async function uploadFile(filePath) {
+async function uploadFile(filePath, sourceDir, destinationDir) {
   const fileContent = fs.readFileSync(filePath)
-  const key = getS3Key(filePath)
+  const key = getS3Key(filePath, sourceDir, destinationDir)
   const contentType = mime.lookup(filePath) || "application/octet-stream"
 
   await s3
@@ -84,20 +89,23 @@ async function runWithConcurrency(items, concurrency, worker) {
   )
 }
 
-async function uploadDir(dir) {
+async function uploadDir(sourceDir, destinationDir) {
   await runWithConcurrency(
-    getStaticFiles(dir),
+    getStaticFiles(sourceDir),
     MAX_CONCURRENT_UPLOADS,
-    uploadFile
+    (filePath) => uploadFile(filePath, sourceDir, destinationDir)
   )
 }
 
 async function main() {
-  if (!fs.existsSync(BUILD_DIR)) {
-    throw new Error(`Build directory not found: ${BUILD_DIR}`)
+  for (const dir of [STATIC_DIR, ASSETS_DIR]) {
+    if (!fs.existsSync(dir)) {
+      throw new Error(`Asset directory not found: ${dir}`)
+    }
   }
 
-  await uploadDir(BUILD_DIR)
+  await uploadDir(STATIC_DIR, "_next/static")
+  await uploadDir(ASSETS_DIR, "")
 }
 
 main().catch((error) => {
