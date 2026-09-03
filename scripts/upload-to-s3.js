@@ -13,7 +13,7 @@ const MAX_CONCURRENT_UPLOADS =
     ? Math.floor(parsedConcurrency)
     : DEFAULT_CONCURRENT_UPLOADS
 const STATIC_DIR = ".next/static"
-const ASSETS_DIR = "assets"
+const PUBLIC_DIR = "public"
 
 function getRequiredEnv(name) {
   const value = process.env[name]
@@ -98,14 +98,14 @@ async function uploadDir(sourceDir, destinationDir) {
 }
 
 async function main() {
-  for (const dir of [STATIC_DIR, ASSETS_DIR]) {
+  for (const dir of [STATIC_DIR, PUBLIC_DIR]) {
     if (!fs.existsSync(dir)) {
       throw new Error(`Asset directory not found: ${dir}`)
     }
   }
 
   await uploadDir(STATIC_DIR, "_next/static")
-  await uploadDir(ASSETS_DIR, "")
+  await uploadDir(PUBLIC_DIR, "")
 }
 
 main().catch((error) => {
