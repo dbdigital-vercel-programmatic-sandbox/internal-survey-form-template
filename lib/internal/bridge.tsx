@@ -27,6 +27,8 @@
  * - `trackInteractivePage({ event, properties })` — sends an interactive page tracking event (e.g.
  *   content-consumed / time-spent events) through the native app. Use the
  *   `useInteractiveContentConsumedEvent()` hook to fire it automatically on mount.
+ *   ⚠️ This event tracks page exit / consumption time — it must be added at the
+ *   page level only (top-level page component), never in nested components.
  *
  * HOOKS (derived from the context):
  * - `useWebviewContext()` — access all bridge methods and flags
@@ -76,6 +78,11 @@
  *    It accepts `{ event: string; properties?: Record<string, unknown> }` —
  *    do not invent extra fields. It silently no-ops when the native bridge
  *    does not support it.
+ * 7. ⚠️ `useInteractiveContentConsumedEvent()` / `trackInteractivePage` track
+ *    page exit / consumption time. Add the hook exactly once per page, in the
+ *    top-level page component (e.g. `app/webview/page.tsx`'s client
+ *    component) — NEVER in nested or shared components, otherwise exit time
+ *    will be tracked incorrectly (multiple/duplicate events).
  * ============================================================================
  */
 
@@ -508,6 +515,15 @@ export const usePullToRefreshDisabler = () => {
   }, []);
 };
 
+/**
+ * Fires the standard "Interactive Content Consumed" tracking event for a page
+ * via the native `trackInteractivePage` bridge method.
+ *
+ * ⚠️ This event tracks page exit / consumption time. It must be called exactly
+ * once per page, from the top-level page component only — never from nested or
+ * shared components, otherwise exit time will be tracked incorrectly
+ * (duplicate events per page view).
+ */
 export const useInteractiveContentConsumedEvent = (props: {
   source: string;
   contentType: string;
