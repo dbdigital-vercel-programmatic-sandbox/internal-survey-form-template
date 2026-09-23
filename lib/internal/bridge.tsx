@@ -24,6 +24,11 @@
  * - `triggerLogin({ loginMessage, source })` — opens the native login screen
  * - `shareView(imageUrl, shareTextAndLink?)` — triggers native share sheet
  * - `triggerAnalyticsEvent({ event, properties })` — sends an analytics event through the native app
+ * - `trackInteractivePage({ event, properties })` — sends an interactive page tracking event (e.g.
+ *   content-consumed / time-spent events) through the native app. Use the
+ *   `useInteractiveContentConsumedEvent()` hook to fire it automatically on mount.
+ *   ⚠️ This event tracks page exit / consumption time — it must be added at the
+ *   page level only (top-level page component), never in nested components.
  *
  * HOOKS (derived from the context):
  * - `useWebviewContext()` — access all bridge methods and flags
@@ -68,6 +73,16 @@
  * 5. `triggerAnalyticsEvent` is available via `useWebviewContext()`. It only
  *    sends events inside Android/iOS webviews. Outside webviews, or when the
  *    native bridge is missing, it logs the skipped event.
+ * 6. `trackInteractivePage` is available via `useWebviewContext()`, or use the
+ *    `useInteractiveContentConsumedEvent()` hook to fire it once on mount.
+ *    It accepts `{ event: string; properties?: Record<string, unknown> }` —
+ *    do not invent extra fields. It silently no-ops when the native bridge
+ *    does not support it.
+ * 7. ⚠️ `useInteractiveContentConsumedEvent()` / `trackInteractivePage` track
+ *    page exit / consumption time. Add the hook exactly once per page, in the
+ *    top-level page component (e.g. `app/webview/page.tsx`'s client
+ *    component) — NEVER in nested or shared components, otherwise exit time
+ *    will be tracked incorrectly (multiple/duplicate events).
  * ============================================================================
  */
 
@@ -282,6 +297,28 @@ const triggerAnalyticsEvent = (params: AnalyticsEventParams) => {
   }
 };
 
+/**
+ * Track an interactive page event through the native app.
+ * Used by native clients for interactive content time-spent / consumed tracking.
+ * Mirrors `bridge.trackInteractivePage` in games-interactive-frontend.
+ */
+const trackInteractivePage = (params: AnalyticsEventParams) => {
+  try {
+    if (isAndroidClient) {
+      if (android.trackInteractivePage) {
+        android.trackInteractivePage(JSON.stringify(params));
+      }
+      return;
+    }
+
+    if (ios.trackInteractivePage) {
+      ios.trackInteractivePage.postMessage(params);
+    }
+  } catch (err) {
+    console.error(err);
+  }
+};
+
 // ---------------------------------------------------------------------------
 // Context
 // ---------------------------------------------------------------------------
@@ -297,6 +334,7 @@ interface WebviewContextValue {
   triggerLogin: (params: { loginMessage: string; source: string }) => void;
   shareView: (params: { imageUrl?: string; shareTextAndLink?: string }) => void;
   triggerAnalyticsEvent: (params: AnalyticsEventParams) => void;
+  trackInteractivePage: (params: AnalyticsEventParams) => void;
 }
 
 const WebviewContext = createContext<WebviewContextValue | null>(null);
@@ -345,6 +383,12 @@ const mockContextValue: WebviewContextValue = {
       params,
     );
   },
+  trackInteractivePage: (params) => {
+    console.info(
+      "trackInteractivePage skipped: native bridge is unavailable",
+      params,
+    );
+  },
 };
 
 export function WebviewProvider({
@@ -377,6 +421,7 @@ export function WebviewProvider({
               triggerLogin,
               shareView,
               triggerAnalyticsEvent,
+              trackInteractivePage,
             }
           : mockContextValue
       }
@@ -468,4 +513,34 @@ export const usePullToRefreshDisabler = () => {
       }
     };
   }, []);
+};
+
+/**
+ * Fires the standard "Interactive Content Consumed" tracking event for a page
+ * via the native `trackInteractivePage` bridge method.
+ *
+ * ⚠️ This event tracks page exit / consumption time. It must be called exactly
+ * once per page, from the top-level page component only — never from nested or
+ * shared components, otherwise exit time will be tracked incorrectly
+ * (duplicate events per page view).
+ */
+export const useInteractiveContentConsumedEvent = (props: {
+  source: string;
+  contentType: string;
+  contentTitle: string;
+}) => {
+  const { source, contentType, contentTitle } = props;
+
+  useEffect(() => {
+    if (isWebview && isAndroidClient && !!android?.trackInteractivePage) {
+      trackInteractivePage({
+        event: "Interactive Content Consumed",
+        properties: {
+          Source: source,
+          "Content Type": contentType,
+          "Content Title": contentTitle,
+        },
+      });
+    }
+  }, [source, contentType, contentTitle]);
 };

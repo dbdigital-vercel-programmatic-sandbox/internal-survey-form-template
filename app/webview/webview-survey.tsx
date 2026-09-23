@@ -3,7 +3,11 @@
 import Image from "next/image"
 import { XIcon } from "lucide-react"
 
-import { usePullToRefreshDisabler, useWebviewContext } from "@/bridge"
+import {
+  useInteractiveContentConsumedEvent,
+  usePullToRefreshDisabler,
+  useWebviewContext,
+} from "@/bridge"
 
 const BLOCKER_MESSAGE =
   "दैनिक भास्कर एप के सर्वे में शामिल होने का समय खत्म हो चुका है।"
@@ -12,6 +16,16 @@ export function WebviewSurvey() {
   const { closeScreen } = useWebviewContext()
 
   usePullToRefreshDisabler()
+
+  // Page-level tracking: fires the "Interactive Content Consumed" event for
+  // this page. This event tracks page exit / consumption time, so it must be
+  // added exactly once per page — in the top-level page component only,
+  // never in nested or shared components.
+  useInteractiveContentConsumedEvent({
+    source: "webview",
+    contentType: "Survey",
+    contentTitle: "Webview Survey",
+  })
 
   function closeSurveyScreen() {
     try {
