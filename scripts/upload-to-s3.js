@@ -14,8 +14,10 @@ const MAX_CONCURRENT_UPLOADS =
     : DEFAULT_CONCURRENT_UPLOADS
 const STATIC_DIR = ".next/static"
 const PUBLIC_DIR = "public"
-const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable"
-const REVALIDATE_CACHE_CONTROL = "public, max-age=0, must-revalidate"
+// Keys are prefixed with VERCEL_URL, so every deployment writes fresh keys and
+// this content can never change under a key. "private" keeps shared caches
+// (CDN/proxies) out and caches only in the browser.
+const CACHE_CONTROL = "private, max-age=31536000, immutable"
 
 function getRequiredEnv(name) {
   const value = process.env[name]
@@ -57,7 +59,7 @@ function getS3Key(filePath, sourceDir, destinationDir) {
   )
 }
 
-async function uploadFile(filePath, sourceDir, destinationDir, cacheControl) {
+async function uploadFile(filePath, sourceDir, destinationDir) {
   const fileContent = fs.readFileSync(filePath)
   const key = getS3Key(filePath, sourceDir, destinationDir)
   const contentType = mime.lookup(filePath) || "application/octet-stream"
@@ -68,7 +70,7 @@ async function uploadFile(filePath, sourceDir, destinationDir, cacheControl) {
       Key: key,
       Body: fileContent,
       ContentType: contentType,
-      CacheControl: cacheControl,
+      CacheControl: CACHE_CONTROL,
     })
     .promise()
 
@@ -91,12 +93,11 @@ async function runWithConcurrency(items, concurrency, worker) {
   )
 }
 
-async function uploadDir(sourceDir, destinationDir, cacheControl) {
+async function uploadDir(sourceDir, destinationDir) {
   await runWithConcurrency(
     getStaticFiles(sourceDir),
     MAX_CONCURRENT_UPLOADS,
-    (filePath) =>
-      uploadFile(filePath, sourceDir, destinationDir, cacheControl)
+    (filePath) => uploadFile(filePath, sourceDir, destinationDir)
   )
 }
 
@@ -107,8 +108,8 @@ async function main() {
     }
   }
 
-  await uploadDir(STATIC_DIR, "_next/static", IMMUTABLE_CACHE_CONTROL)
-  await uploadDir(PUBLIC_DIR, "", REVALIDATE_CACHE_CONTROL)
+  await uploadDir(STATIC_DIR, "_next/static")
+  await uploadDir(PUBLIC_DIR, "")
 }
 
 main().catch((error) => {
