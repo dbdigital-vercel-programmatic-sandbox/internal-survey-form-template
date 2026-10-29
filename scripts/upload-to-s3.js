@@ -15,13 +15,13 @@ const MAX_CONCURRENT_UPLOADS =
 const STATIC_DIR = ".next/static"
 const PUBLIC_DIR = "public"
 // Keys are prefixed with VERCEL_URL, so every deployment writes fresh keys and
-// this content can never change under a key. "private" keeps shared caches
-// (CDN/proxies) out and caches only in the browser. .next/static filenames are
-// content-hashed by Next.js, so all of them cache long-term. public/ filenames
-// are not hashed, so long-lived caching there is limited to media assets
-// (images, videos, audio, fonts); everything else always revalidates.
-const IMMUTABLE_CACHE_CONTROL = "private, max-age=31536000, immutable"
-const REVALIDATE_CACHE_CONTROL = "private, max-age=0, must-revalidate"
+// this content can never change under a key, in the browser or in shared
+// caches (the CloudFront distribution in front of the bucket). .next/static
+// filenames are content-hashed by Next.js, so all of them cache long-term.
+// public/ filenames are not hashed, so long-lived caching there is limited to
+// media assets (images, videos, audio, fonts); everything else revalidates.
+const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable"
+const REVALIDATE_CACHE_CONTROL = "public, max-age=0, must-revalidate"
 
 function getCacheControl(sourceDir, contentType) {
   if (sourceDir === STATIC_DIR) {

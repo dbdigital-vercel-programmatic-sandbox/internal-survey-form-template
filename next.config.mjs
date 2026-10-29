@@ -12,7 +12,7 @@ const nextConfig = {
         headers: [
           {
             key: "Cache-Control",
-            value: "private, max-age=31536000, immutable",
+            value: "public, max-age=31536000, immutable",
           },
         ],
       },
