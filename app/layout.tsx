@@ -1,8 +1,18 @@
+import type { Metadata } from "next"
+
 import { Geist_Mono, Inter } from "next/font/google"
 
 import "./globals.css"
 import { ThemeProvider } from "@/components/theme-provider"
 import { cn } from "@/lib/utils"
+
+// The default favicon is served from bhaskar.com (CloudFront) instead of this
+// deployment, so favicon requests do not count as Vercel CDN requests here.
+export const metadata: Metadata = {
+  icons: {
+    icon: "https://www.bhaskar.com/favicon.ico",
+  },
+}
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-sans" })
 
