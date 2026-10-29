@@ -14,8 +14,24 @@ const MAX_CONCURRENT_UPLOADS =
     : DEFAULT_CONCURRENT_UPLOADS
 const STATIC_DIR = ".next/static"
 const PUBLIC_DIR = "public"
+// Keys are prefixed with VERCEL_URL, so every deployment writes fresh keys and
+// this content can never change under a key, in the browser or in shared
+// caches (the CloudFront distribution in front of the bucket). .next/static
+// filenames are content-hashed by Next.js, so all of them cache long-term.
+// public/ filenames are not hashed, so long-lived caching there is limited to
+// media assets (images, videos, audio, fonts); everything else revalidates.
 const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable"
 const REVALIDATE_CACHE_CONTROL = "public, max-age=0, must-revalidate"
+
+function getCacheControl(sourceDir, contentType) {
+  if (sourceDir === STATIC_DIR) {
+    return IMMUTABLE_CACHE_CONTROL
+  }
+
+  return /^(image|video|audio|font)\//.test(contentType)
+    ? IMMUTABLE_CACHE_CONTROL
+    : REVALIDATE_CACHE_CONTROL
+}
 
 function getRequiredEnv(name) {
   const value = process.env[name]
@@ -57,7 +73,7 @@ function getS3Key(filePath, sourceDir, destinationDir) {
   )
 }
 
-async function uploadFile(filePath, sourceDir, destinationDir, cacheControl) {
+async function uploadFile(filePath, sourceDir, destinationDir) {
   const fileContent = fs.readFileSync(filePath)
   const key = getS3Key(filePath, sourceDir, destinationDir)
   const contentType = mime.lookup(filePath) || "application/octet-stream"
@@ -68,7 +84,7 @@ async function uploadFile(filePath, sourceDir, destinationDir, cacheControl) {
       Key: key,
       Body: fileContent,
       ContentType: contentType,
-      CacheControl: cacheControl,
+      CacheControl: getCacheControl(sourceDir, contentType),
     })
     .promise()
 
@@ -91,12 +107,11 @@ async function runWithConcurrency(items, concurrency, worker) {
   )
 }
 
-async function uploadDir(sourceDir, destinationDir, cacheControl) {
+async function uploadDir(sourceDir, destinationDir) {
   await runWithConcurrency(
     getStaticFiles(sourceDir),
     MAX_CONCURRENT_UPLOADS,
-    (filePath) =>
-      uploadFile(filePath, sourceDir, destinationDir, cacheControl)
+    (filePath) => uploadFile(filePath, sourceDir, destinationDir)
   )
 }
 
@@ -107,8 +122,8 @@ async function main() {
     }
   }
 
-  await uploadDir(STATIC_DIR, "_next/static", IMMUTABLE_CACHE_CONTROL)
-  await uploadDir(PUBLIC_DIR, "", REVALIDATE_CACHE_CONTROL)
+  await uploadDir(STATIC_DIR, "_next/static")
+  await uploadDir(PUBLIC_DIR, "")
 }
 
 main().catch((error) => {

@@ -5,19 +5,6 @@ const vercelUrl = process.env.VERCEL_URL?.replace(/^\/+|\/+$/g, "")
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   assetPrefix: isProd && cdnUrl && vercelUrl ? `https://${cdnUrl}/${vercelUrl}` : "",
-  async headers() {
-    return [
-      {
-        source: "/favicon.ico",
-        headers: [
-          {
-            key: "Cache-Control",
-            value: "public, max-age=31536000, immutable",
-          },
-        ],
-      },
-    ]
-  },
 }
 
 export default nextConfig
