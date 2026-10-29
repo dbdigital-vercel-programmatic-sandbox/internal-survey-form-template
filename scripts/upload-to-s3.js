@@ -16,8 +16,17 @@ const STATIC_DIR = ".next/static"
 const PUBLIC_DIR = "public"
 // Keys are prefixed with VERCEL_URL, so every deployment writes fresh keys and
 // this content can never change under a key. "private" keeps shared caches
-// (CDN/proxies) out and caches only in the browser.
-const CACHE_CONTROL = "private, max-age=31536000, immutable"
+// (CDN/proxies) out and caches only in the browser. Only media assets
+// (images, videos, audio, fonts) get long-lived caching; everything else
+// always revalidates so code files are never stuck in a cache.
+const IMMUTABLE_CACHE_CONTROL = "private, max-age=31536000, immutable"
+const REVALIDATE_CACHE_CONTROL = "private, max-age=0, must-revalidate"
+
+function getCacheControl(contentType) {
+  return /^(image|video|audio|font)\//.test(contentType)
+    ? IMMUTABLE_CACHE_CONTROL
+    : REVALIDATE_CACHE_CONTROL
+}
 
 function getRequiredEnv(name) {
   const value = process.env[name]
@@ -70,7 +79,7 @@ async function uploadFile(filePath, sourceDir, destinationDir) {
       Key: key,
       Body: fileContent,
       ContentType: contentType,
-      CacheControl: CACHE_CONTROL,
+      CacheControl: getCacheControl(contentType),
     })
     .promise()
 
