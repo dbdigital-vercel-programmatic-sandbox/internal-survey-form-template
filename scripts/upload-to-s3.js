@@ -16,13 +16,18 @@ const STATIC_DIR = ".next/static"
 const PUBLIC_DIR = "public"
 // Keys are prefixed with VERCEL_URL, so every deployment writes fresh keys and
 // this content can never change under a key. "private" keeps shared caches
-// (CDN/proxies) out and caches only in the browser. Only media assets
-// (images, videos, audio, fonts) get long-lived caching; everything else
-// always revalidates so code files are never stuck in a cache.
+// (CDN/proxies) out and caches only in the browser. .next/static filenames are
+// content-hashed by Next.js, so all of them cache long-term. public/ filenames
+// are not hashed, so long-lived caching there is limited to media assets
+// (images, videos, audio, fonts); everything else always revalidates.
 const IMMUTABLE_CACHE_CONTROL = "private, max-age=31536000, immutable"
 const REVALIDATE_CACHE_CONTROL = "private, max-age=0, must-revalidate"
 
-function getCacheControl(contentType) {
+function getCacheControl(sourceDir, contentType) {
+  if (sourceDir === STATIC_DIR) {
+    return IMMUTABLE_CACHE_CONTROL
+  }
+
   return /^(image|video|audio|font)\//.test(contentType)
     ? IMMUTABLE_CACHE_CONTROL
     : REVALIDATE_CACHE_CONTROL
@@ -79,7 +84,7 @@ async function uploadFile(filePath, sourceDir, destinationDir) {
       Key: key,
       Body: fileContent,
       ContentType: contentType,
-      CacheControl: getCacheControl(contentType),
+      CacheControl: getCacheControl(sourceDir, contentType),
     })
     .promise()
 
